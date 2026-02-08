@@ -464,6 +464,7 @@ void MainFrame::init(const wxArrayString& filesToOpen, bool fileInCommandLine)
         // for some reason, wxStaticText on some systems needs to be initially multiline to properly scale later one
         m_notification_text = new wxStaticText(m_notification_panel, wxID_ANY, wxT("_______________\n_______________\n_______________\n_______________"),
                                                wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
+        m_notification_text->SetForegroundColour(wxColor(0, 0, 0));
         m_notification_icon = new wxStaticBitmap(m_notification_panel, wxID_ANY,
                                                     wxArtProvider::GetBitmap(wxART_WARNING, wxART_OTHER , wxSize(48, 48)));
         notification_sizer->Add(m_notification_icon,
@@ -488,7 +489,7 @@ void MainFrame::init(const wxArrayString& filesToOpen, bool fileInCommandLine)
         wxButton* hideNotif = new wxButton(m_notification_panel, wxID_ANY, _("Hide"));
         notification_sizer->Add(hideNotif, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
         m_notification_panel->SetSizer(notification_sizer);
-        m_notification_panel->SetBackgroundColour(wxColor(255,225,110));
+        m_notification_panel->SetBackgroundColour(wxColor(255,240,180));
         m_notification_panel->Hide();
         hideNotif->Connect(hideNotif->GetId(), wxEVT_COMMAND_BUTTON_CLICKED,
                            wxCommandEventHandler(MainFrame::onHideNotifBar), NULL, this);
@@ -820,7 +821,7 @@ void MainFrame::initToolbar()
 void MainFrame::setNotificationWarning()
 {
     m_notification_icon->SetBitmap(wxArtProvider::GetBitmap(wxART_WARNING, wxART_OTHER , wxSize(48, 48)));
-    m_notification_panel->SetBackgroundColour(wxColor(255,225,110));
+    m_notification_panel->SetBackgroundColour(wxColor(255,240,180));
 }
 
 void MainFrame::setNotificationInfo()
