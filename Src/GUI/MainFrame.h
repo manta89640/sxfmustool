@@ -27,6 +27,7 @@
 #include <wx/frame.h>
 #include <wx/toolbar.h>
 #include <wx/panel.h>
+#include <wx/hyperlink.h>
 
 
 #include "AriaCore.h"
@@ -366,15 +367,24 @@ namespace AriaMaestosa
         wxMenuItem* m_playthrough;
 
         wxPanel*         m_notification_panel;
-        wxStaticText*    m_notification_text;
+        wxTextCtrl*      m_notification_text;
         wxStaticBitmap*  m_notification_icon;
 
 #if wxCHECK_VERSION(2,9,1)
         wxGenericHyperlinkCtrl* m_notification_link;
 #endif
 
+        struct SeqWarnings
+        {
+            wxString text;
+            bool hidden;
+            SeqWarnings() : hidden(false) {}
+        };
+        std::map<Sequence*, SeqWarnings> m_seq_warnings;
+
         void setNotificationWarning();
         void setNotificationInfo();
+        void updateNotificationForCurrentSequence();
 
         wxBoxSizer* m_root_sizer;
 
@@ -470,7 +480,7 @@ namespace AriaMaestosa
             doDisableMenusForWelcomeScreen(disable);
         }
 
-        void onHideNotifBar(wxCommandEvent& evt);
+        void onHideNotifBar(wxHyperlinkEvent& evt);
 
         void enterPressedInTopBar(wxCommandEvent& evt);
 

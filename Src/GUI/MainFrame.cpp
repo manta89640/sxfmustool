@@ -461,16 +461,17 @@ void MainFrame::init(const wxArrayString& filesToOpen, bool fileInCommandLine)
 	{
         wxBoxSizer* notification_sizer = new wxBoxSizer(wxHORIZONTAL);
         m_notification_panel = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_SIMPLE);
-        // for some reason, wxStaticText on some systems needs to be initially multiline to properly scale later one
-        m_notification_text = new wxStaticText(m_notification_panel, wxID_ANY, wxT("_______________\n_______________\n_______________\n_______________"),
-                                               wxDefaultPosition, wxDefaultSize, wxST_NO_AUTORESIZE);
+        m_notification_text = new wxTextCtrl(m_notification_panel, wxID_ANY, wxEmptyString,
+                                             wxDefaultPosition, wxSize(-1, 100),
+                                             wxTE_MULTILINE | wxTE_READONLY | wxTE_NO_VSCROLL | wxNO_BORDER);
         m_notification_text->SetForegroundColour(wxColor(0, 0, 0));
+        m_notification_text->SetBackgroundColour(wxColor(255,240,180));
         m_notification_icon = new wxStaticBitmap(m_notification_panel, wxID_ANY,
                                                     wxArtProvider::GetBitmap(wxART_WARNING, wxART_OTHER , wxSize(48, 48)));
         notification_sizer->Add(m_notification_icon,
                                 0, wxALIGN_CENTER_VERTICAL | wxALL, 5 );
-        
-        
+
+
         wxBoxSizer* subsizer = new wxBoxSizer(wxVERTICAL);
         subsizer->Add(m_notification_text, 1, wxEXPAND);
         notification_sizer->Add(subsizer, 1, wxALIGN_CENTER_VERTICAL | wxALL, 5);
@@ -486,13 +487,18 @@ void MainFrame::init(const wxArrayString& filesToOpen, bool fileInCommandLine)
 #endif
         
         //I18N: to hide the panel that is shown when a file could not be imported successfully
-        wxButton* hideNotif = new wxButton(m_notification_panel, wxID_ANY, _("Hide"));
+        wxGenericHyperlinkCtrl* hideNotif = new wxGenericHyperlinkCtrl(m_notification_panel, wxID_ANY,
+                                                                       _("Hide"), wxEmptyString);
+        hideNotif->SetForegroundColour(wxColor(0, 0, 0));
+        hideNotif->SetHoverColour(wxColor(0, 0, 0));
+        hideNotif->SetVisitedColour(wxColor(0, 0, 0));
+        hideNotif->SetNormalColour(wxColor(0, 0, 0));
         notification_sizer->Add(hideNotif, 0, wxALIGN_CENTER_VERTICAL | wxALL, 5);
         m_notification_panel->SetSizer(notification_sizer);
         m_notification_panel->SetBackgroundColour(wxColor(255,240,180));
         m_notification_panel->Hide();
-        hideNotif->Connect(hideNotif->GetId(), wxEVT_COMMAND_BUTTON_CLICKED,
-                           wxCommandEventHandler(MainFrame::onHideNotifBar), NULL, this);
+        hideNotif->Connect(hideNotif->GetId(), wxEVT_HYPERLINK,
+                           wxHyperlinkEventHandler(MainFrame::onHideNotifBar), NULL, this);
 	}
     m_root_sizer->Add( m_notification_panel, 0, wxEXPAND | wxALL, 2);
 
@@ -822,12 +828,46 @@ void MainFrame::setNotificationWarning()
 {
     m_notification_icon->SetBitmap(wxArtProvider::GetBitmap(wxART_WARNING, wxART_OTHER , wxSize(48, 48)));
     m_notification_panel->SetBackgroundColour(wxColor(255,240,180));
+    m_notification_text->SetBackgroundColour(wxColor(255,240,180));
 }
 
 void MainFrame::setNotificationInfo()
 {
     m_notification_icon->SetBitmap(wxArtProvider::GetBitmap(wxART_INFORMATION, wxART_OTHER , wxSize(48, 48)));
     m_notification_panel->SetBackgroundColour(wxColor(170,214,250));
+    m_notification_text->SetBackgroundColour(wxColor(170,214,250));
+}
+
+void MainFrame::updateNotificationForCurrentSequence()
+{
+    if (m_sequences.size() == 0)
+    {
+        m_notification_panel->Hide();
+        Layout();
+        return;
+    }
+
+    Sequence* seq = getCurrentSequence();
+    std::map<Sequence*, SeqWarnings>::iterator it = m_seq_warnings.find(seq);
+
+    if (it == m_seq_warnings.end() or it->second.hidden or it->second.text.IsEmpty())
+    {
+        m_notification_panel->Hide();
+        Layout();
+        return;
+    }
+
+    setNotificationWarning();
+
+#if wxCHECK_VERSION(2,9,1)
+    m_notification_link->Hide();
+#endif
+
+    m_notification_text->SetValue(it->second.text);
+    m_notification_panel->Layout();
+    m_notification_panel->GetSizer()->SetSizeHints(m_notification_panel);
+    m_notification_panel->Show();
+    Layout();
 }
 
 void MainFrame::onShow(wxShowEvent& evt)
@@ -898,8 +938,17 @@ void MainFrame::onTimer(wxTimerEvent & event)
 
 // ----------------------------------------------------------------------------------------------------------
 
-void MainFrame::onHideNotifBar(wxCommandEvent& evt)
+void MainFrame::onHideNotifBar(wxHyperlinkEvent& evt)
 {
+    if (m_sequences.size() > 0)
+    {
+        Sequence* seq = getCurrentSequence();
+        std::map<Sequence*, SeqWarnings>::iterator it = m_seq_warnings.find(seq);
+        if (it != m_seq_warnings.end())
+        {
+            it->second.hidden = true;
+        }
+    }
     m_notification_panel->Hide();
     Layout();
 }
@@ -1880,6 +1929,7 @@ bool MainFrame::closeSequence(int id_arg) // -1 means current
         }
     }
 
+    m_seq_warnings.erase(m_sequences[id].getModel());
     m_sequences.erase( id );
     m_paused = false;
     m_toolbar->SetToolNormalBitmap(PLAY_CLICKED, m_play_bitmap);
@@ -1909,6 +1959,11 @@ bool MainFrame::closeSequence(int id_arg) // -1 means current
             }
         }
         setCurrentSequence(newCurrent);
+    }
+    else
+    {
+        m_notification_panel->Hide();
+        Layout();
     }
 
     Display::render();
@@ -1976,6 +2031,7 @@ void MainFrame::setCurrentSequence(int n, bool updateView)
         m_paused = false;
         updateTopBarAndScrollbarsForSequence( getCurrentGraphicalSequence() );
         updateMenuBarToSequence();
+        updateNotificationForCurrentSequence();
     }
 }
 
@@ -2148,18 +2204,11 @@ void MainFrame::loadMidiFile(const wxString& filePath)
             full << "    " << (*it).utf8_str();
         }
 
-        setNotificationWarning();
+        SeqWarnings& sw = m_seq_warnings[getCurrentSequence()];
+        sw.text = wxString(full.str().c_str(), wxConvUTF8);
+        sw.hidden = false;
 
-#if wxCHECK_VERSION(2,9,1)
-        m_notification_link->Hide();
-#endif
-
-        m_notification_text->SetLabel(wxString(full.str().c_str(), wxConvUTF8));
-        m_notification_panel->Layout();
-        m_notification_panel->GetSizer()->SetSizeHints(m_notification_panel);
-        m_notification_panel->Show();
-        Layout();
-
+        updateNotificationForCurrentSequence();
     }
     
     addRecentFile(filePath);
@@ -2322,7 +2371,7 @@ void MainFrame::evt_newVersionAvailable(wxCommandEvent& evt)
     m_notification_link->Show();
 #endif
 
-    m_notification_text->SetLabel(wxString(_("A new version of Aria Maestosa is now available! Visit the following link to download it :")));
+    m_notification_text->SetValue(wxString(_("A new version of Aria Maestosa is now available! Visit the following link to download it :")));
     m_notification_panel->Layout();
     m_notification_panel->GetSizer()->SetSizeHints(m_notification_panel);
     m_notification_panel->Show();
