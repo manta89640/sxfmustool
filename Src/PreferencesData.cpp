@@ -297,6 +297,12 @@ void PreferencesData::fillSettingsVector()
                                      _("Show note names in piano-roll"),
                                      SETTING_BOOL, SETTING_CATEGORY_EDITION, wxT("1") );
     m_settings.push_back(showNoteNames);
+
+    Setting* gbaProjectDir = new Setting(fromCString(SETTING_ID_GBA_PROJECT_DIR),
+                                     _("GBA Project Directory (for drum detection)"),
+                                     SETTING_STRING, SETTING_CATEGORY_EDITION, wxEmptyString,
+                                     SETTING_SUBTYPE_DIRECTORY);
+    m_settings.push_back(gbaProjectDir);
     
     
     Setting* loadLastSession = new Setting(fromCString(SETTING_ID_LOAD_LAST_SESSION),

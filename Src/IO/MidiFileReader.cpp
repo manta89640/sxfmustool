@@ -33,8 +33,11 @@
 #include "jdksmidi/filewritemultitrack.h"
 
 #include <cmath>
+#include <set>
 #include <string>
 #include <wx/intl.h>
+#include <wx/filename.h>
+#include <wx/textfile.h>
 
 class AriaMIDIFileReadMultiTrack : public jdksmidi::MIDIFileReadMultiTrack
 {
@@ -49,6 +52,84 @@ public:
         printf("[jdksmidi] ERROR: %s\n", err);
     }
 };
+
+static int parseVoiceGroupNumber(const wxString& projectDir, const wxString& midiFilename)
+{
+    wxString cfgPath = projectDir + wxT("/sound/songs/midi/midi.cfg");
+    if (not wxFileExists(cfgPath)) return -1;
+
+    wxTextFile file(cfgPath);
+    if (not file.Open()) return -1;
+
+    wxString lowerTarget = midiFilename.Lower();
+
+    for (wxString line = file.GetFirstLine(); !file.Eof(); line = file.GetNextLine())
+    {
+        wxString trimmed = line.Strip(wxString::both);
+        if (trimmed.IsEmpty()) continue;
+
+        int colonPos = trimmed.Find(':');
+        if (colonPos == wxNOT_FOUND) continue;
+
+        wxString lineFilename = trimmed.Left(colonPos).Strip(wxString::both).Lower();
+        if (lineFilename != lowerTarget) continue;
+
+        wxString flags = trimmed.Mid(colonPos + 1);
+        int gPos = flags.Find(wxT("-G"));
+        if (gPos == wxNOT_FOUND) return 0; // mid2agb defaults to voicegroup000
+
+        wxString after = flags.Mid(gPos + 2);
+        wxString digits;
+        for (size_t i = 0; i < after.Len(); i++)
+        {
+            if (after[i] >= '0' and after[i] <= '9')
+                digits += after[i];
+            else
+                break;
+        }
+        if (digits.IsEmpty()) return -1;
+
+        long val = -1;
+        digits.ToLong(&val);
+        return (int)val;
+    }
+    return -1;
+}
+
+static std::set<int> parseDrumPrograms(const wxString& projectDir, int voiceGroupNum)
+{
+    std::set<int> drums;
+    if (voiceGroupNum < 0) return drums;
+
+    wxString filename = wxString::Format(wxT("/sound/voicegroups/voicegroup%03i.inc"), voiceGroupNum);
+    wxString path = projectDir + filename;
+    if (not wxFileExists(path)) return drums;
+
+    wxTextFile file(path);
+    if (not file.Open()) return drums;
+
+    bool pastLabel = false;
+    int programIndex = 0;
+
+    for (wxString line = file.GetFirstLine(); !file.Eof(); line = file.GetNextLine())
+    {
+        wxString trimmed = line.Strip(wxString::both);
+        if (trimmed.IsEmpty()) continue;
+
+        if (not pastLabel)
+        {
+            if (trimmed.Contains(wxT("::")))
+                pastLabel = true;
+            continue;
+        }
+
+        if (trimmed.Contains(wxT("voice_keysplit_all")))
+            drums.insert(programIndex);
+
+        programIndex++;
+    }
+    return drums;
+}
 
 bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std::set<wxString>& warnings)
 {
@@ -112,7 +193,44 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
         }
 
         sequence->prepareEmptyTracksForLoading(real_track_amount /*16*/);
-            
+
+        // ---- GBA drum track detection via voice group files ----
+        std::set<int> gbaDrumTracks;
+        int voiceGroupNum = -1;
+        {
+            wxString projectDir = PreferencesData::getInstance()->getValue(SETTING_ID_GBA_PROJECT_DIR);
+            if (not projectDir.IsEmpty())
+            {
+                wxFileName fn(filepath);
+                wxString midiFilename = fn.GetFullName();
+                voiceGroupNum = parseVoiceGroupNumber(projectDir, midiFilename);
+                std::set<int> drumPrograms = parseDrumPrograms(projectDir, voiceGroupNum);
+                if (not drumPrograms.empty())
+                {
+                    for (int tid = 0; tid < trackAmount; tid++)
+                    {
+                        jdksmidi::MIDITrack* t = jdksequence.GetTrack(tid);
+                        for (int eid = 0; eid < t->GetNumEvents(); eid++)
+                        {
+                            jdksmidi::MIDITimedBigMessage* e = t->GetEvent(eid);
+                            if (e->IsProgramChange())
+                            {
+                                if (drumPrograms.count(e->GetPGValue()) > 0)
+                                    gbaDrumTracks.insert(tid);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (not gbaDrumTracks.empty())
+                {
+                    warnings.insert(wxString::Format(
+                        _("Detected %i GBA drum track(s) via voice group %03i."),
+                        (int)gbaDrumTracks.size(), voiceGroupNum));
+                }
+            }
+        }
+
          // ----------------------------------- for each track -------------------------------------
         int realTrackID=-1;
         for (int trackID=0; trackID<trackAmount; trackID++)
@@ -144,6 +262,8 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
             if (eventAmount == 0) continue;
             realTrackID ++;
             Track* ariaTrack = sequence->getTrack(realTrackID);
+
+            const bool isDrumTrack = (gbaDrumTracks.count(trackID) > 0);
 
             int lastEventTick_inTrack = 0;
 
@@ -203,7 +323,7 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
                 if (event->IsNoteOn() and event->GetVelocity() > 0)
                 {
 
-                    const int note = ((channel == 9) ? event->GetNote() : 131 - event->GetNote());
+                    const int note = ((channel == 9 or isDrumTrack) ? event->GetNote() : 131 - event->GetNote());
                     const int volume = event->GetVelocity();
 
                     ariaTrack->addNote_import(note,
@@ -216,7 +336,7 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
                 // ----------------------------------- note off -------------------------------------
                 else if (event->IsNoteOff() or (event->IsNoteOn() and event->GetVelocity() == 0))
                 {
-                    if (channel == 9) continue; // drum notes have no durations so dont care about this event
+                    if (channel == 9 or isDrumTrack) continue; // drum notes have no durations so dont care about this event
                     const int note = (131 - event->GetNote());
                     
                     // a note off event was found, find to which note on event it corresponds
@@ -345,7 +465,7 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
                     }
                     else
                     {
-                        if (channel == 9) 
+                        if (channel == 9 or isDrumTrack)
                         {
                             ariaTrack->setDrumKit(instrument);
                             ariaTrack->setNotationType(DRUM, true);
@@ -552,7 +672,7 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
                 sequence->setInternalName( trackName );
             }
 
-            if (ariaTrack->getChannel() == 9)
+            if (ariaTrack->getChannel() == 9 or isDrumTrack)
             {
                 ariaTrack->setNotationType(DRUM, true);
             }

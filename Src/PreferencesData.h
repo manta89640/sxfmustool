@@ -48,7 +48,9 @@ namespace AriaMaestosa
     {
         SETTING_SUBTYPE_NONE,
         /** Only for 'SETTING_STRING */
-        SETTING_SUBTYPE_FILE_OR_DEFAULT
+        SETTING_SUBTYPE_FILE_OR_DEFAULT,
+        /** Only for 'SETTING_STRING' - shows a directory picker */
+        SETTING_SUBTYPE_DIRECTORY
     };
     
 #ifdef DEFINE_SETTING_NAMES
@@ -116,7 +118,9 @@ static const wxString SYSTEM_BANK = _("System soundbank");
     EXTERN const char* SETTING_ID_FLUIDSYNTH_SOUNDFONT_PATH DEFAULT("fluidsynthSoundfontPath");
     EXTERN const char* SETTING_ID_SOUNDBANK        DEFAULT("soundbank");
 #endif
-    
+
+    EXTERN const char* SETTING_ID_GBA_PROJECT_DIR  DEFAULT("gbaProjectDir");
+
 #undef EXTERN
 #undef DEFAULT
     

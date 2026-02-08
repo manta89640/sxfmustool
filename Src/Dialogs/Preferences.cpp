@@ -34,6 +34,7 @@
 #include <wx/textctrl.h>
 #include <wx/combobox.h>
 #include <wx/msgdlg.h>
+#include <wx/dirdlg.h>
 
 using namespace AriaMaestosa;
 
@@ -347,22 +348,38 @@ wxDialog(parent, wxID_ANY,
                 {
                     QuickBoxLayout box(this, column);
                     box.add(new wxStaticText(box.pane, wxID_ANY, settings[i].m_user_name), 1);
-                    
+
                     wxString choices[] = {SYSTEM_BANK, _("Browse...")};
                     wxComboBox* combo = new wxComboBox(box.pane, wxID_ANY, settings[i].m_value,
                                                        wxDefaultPosition, wxDefaultSize,
-                                                       2, choices);                    
+                                                       2, choices);
                     w->m_textbox = combo;
                     combo->Connect(wxEVT_COMMAND_COMBOBOX_SELECTED,
                                    wxCommandEventHandler(PreferencesDialog::onComboSelection), NULL, this);
                     ASSERT(dynamic_cast<wxWindow*>(w->m_textbox) != NULL);
                     box.add(dynamic_cast<wxWindow*>(w->m_textbox));
                 }
+                else if (settings[i].m_subtype == SETTING_SUBTYPE_DIRECTORY)
+                {
+                    QuickBoxLayout box(this, column);
+                    box.add(new wxStaticText(box.pane, wxID_ANY, settings[i].m_user_name), 1);
+
+                    wxTextCtrl* dirText = new wxTextCtrl(box.pane, wxID_ANY, settings[i].m_value);
+                    w->m_textbox = dirText;
+                    box.add(dirText);
+
+                    wxButton* browseBtn = new wxButton(box.pane, wxID_ANY, _("Browse..."),
+                                                       wxDefaultPosition, wxDefaultSize, wxBU_EXACTFIT);
+                    browseBtn->SetClientData(dirText);
+                    browseBtn->Connect(wxEVT_COMMAND_BUTTON_CLICKED,
+                                       wxCommandEventHandler(PreferencesDialog::onDirBrowse), NULL, this);
+                    box.add(browseBtn, 0);
+                }
                 else
                 {
                     QuickBoxLayout box(this, column);
                     box.add(new wxStaticText(box.pane, wxID_ANY, settings[i].m_user_name ), 1);
-                    
+
                     w->m_textbox = new wxTextCtrl(box.pane, wxID_ANY, settings[i].m_value);
                     ASSERT(dynamic_cast<wxWindow*>(w->m_textbox) != NULL);
                     box.add(dynamic_cast<wxWindow*>(w->m_textbox));
@@ -486,6 +503,22 @@ void PreferencesDialog::onComboSelection(wxCommandEvent& evt)
     else
     {
         m_sound_font_selected = true;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------
+
+void PreferencesDialog::onDirBrowse(wxCommandEvent& evt)
+{
+    wxButton* btn = dynamic_cast<wxButton*>(evt.GetEventObject());
+    wxTextCtrl* textCtrl = static_cast<wxTextCtrl*>(btn->GetClientData());
+
+    wxString currentPath = textCtrl->GetValue();
+    wxDirDialog dlg(this, _("Select GBA Project Directory"),
+                    currentPath, wxDD_DEFAULT_STYLE | wxDD_DIR_MUST_EXIST);
+    if (dlg.ShowModal() == wxID_OK)
+    {
+        textCtrl->SetValue(dlg.GetPath());
     }
 }
 
