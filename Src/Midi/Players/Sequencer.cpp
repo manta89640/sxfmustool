@@ -405,7 +405,7 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
 
         }
         
-        wxThread::Sleep(10);
+        wxThread::Sleep(2);
         
         
         last_millis = total_millis;

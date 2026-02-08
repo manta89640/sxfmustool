@@ -1557,10 +1557,12 @@ void MainPane::exitPlayLoop()
 
 void MainPane::playbackRenderLoop()
 {
-    const int currentTick = PlatformMidiManager::get()->trackPlaybackProgression();
+    // Use accurate (time-based) tick for smooth sub-event interpolation
+    const int accurateTick = PlatformMidiManager::get()->getAccurateTick();
+    const int progressTick = PlatformMidiManager::get()->trackPlaybackProgression();
 
     // check if song is over
-    if (currentTick == -1 or not PlatformMidiManager::get()->isPlaying())
+    if (progressTick == -1 or not PlatformMidiManager::get()->isPlaying())
     {
         if (not PlatformMidiManager::get()->isRecording())
         {
@@ -1568,15 +1570,16 @@ void MainPane::playbackRenderLoop()
             return;
         }
     }
-    
+
     GraphicalSequence* gseq = getMainFrame()->getCurrentGraphicalSequence();
     Sequence* seq = gseq->getModel();
     const int startTick = seq->getPlaybackStartTick();
-    
-    // only draw if it has changed
+    const int currentTick = accurateTick;
+
+    // only draw if the visual position has actually changed
     if (m_last_tick != startTick + currentTick)
     {
-        
+
         // if user has clicked on a little red arrow
         if (m_scroll_to_playback_position)
         {
@@ -1585,38 +1588,33 @@ void MainPane::playbackRenderLoop()
             gseq->setXScrollInPixels(x_scroll_in_pixels);
             DisplayFrame::updateHorizontalScrollbar( startTick + currentTick );
         }
-        
+
         // if follow playback is checked in the menu
         if (seq->isFollowPlaybackEnabled())
         {
             RelativeXCoord tick(startTick + currentTick, MIDI, gseq);
             const int current_pixel = tick.getRelativeTo(WINDOW);
-            
-            //const float zoom = getCurrentSequence()->getZoom();
+
             const int XStart = Editor::getEditorXStart();
-            const int XEnd = getWidth() - 50; // 50 is somewhat arbitrary
+            const int XEnd = getWidth() - 50;
             const int last_visible_measure = gseq->getMeasureBar()->measureAtPixel( XEnd );
             const int current_measure = seq->getMeasureData()->measureAtTick(startTick + currentTick);
-            
+
             if (current_pixel < XStart or current_measure >= last_visible_measure)
             {
                 int new_scroll_in_pixels = (startTick + currentTick) * gseq->getZoom();
                 if (new_scroll_in_pixels < 0) new_scroll_in_pixels=0;
-                // FIXME(DESIGN) - the GUI should not be updated independently of the model
                 gseq->setXScrollInPixels(new_scroll_in_pixels);
                 DisplayFrame::updateHorizontalScrollbar( startTick + currentTick );
             }
         }
-        
+
         setCurrentTick( startTick + currentTick );
-        
+
         RelativeXCoord tick(m_current_tick, MIDI, gseq);
         Display::render();
         m_last_tick = startTick + currentTick;
     }
-
-    // FIXME - why pause the main thread, aren't there better ways?
-    wxMilliSleep(10);
 }
 
 // -----------------------------------------------------------------------------------------------------------

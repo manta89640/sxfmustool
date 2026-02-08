@@ -159,10 +159,17 @@ void wxWidgetApp::onIdle(wxIdleEvent& evt)
 {
     if (m_render_loop_on)
     {
-        frame->getMainPane()->playbackRenderLoop();
+        static wxLongLong lastFrameTime = 0;
+        const wxLongLong now = wxGetLocalTimeMillis();
+        // Target ~120fps (8ms per frame)
+        if (now - lastFrameTime >= 8)
+        {
+            frame->getMainPane()->playbackRenderLoop();
+            lastFrameTime = now;
+        }
         evt.RequestMore();
     }
-    
+
     PlatformMidiManager* pmm = PlatformMidiManager::get();
     if (pmm->isRecording())
     {
