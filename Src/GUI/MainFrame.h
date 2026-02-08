@@ -39,6 +39,7 @@
 #include <map>
 
 class wxButton;
+class wxChoice;
 class wxScrollBar;
 class wxSpinCtrl;
 class wxSpinEvent;
@@ -152,7 +153,8 @@ namespace AriaMaestosa
         SCROLLBAR_H,
         SCROLLBAR_V,
 
-        TIME_SIGNATURE
+        TIME_SIGNATURE,
+        SAMPLE_RATE_CHOICE
     };
 
 
@@ -329,6 +331,7 @@ namespace AriaMaestosa
         SPINNER_CLASS* m_song_length;
         SPINNER_CLASS* m_display_zoom;
         wxTextCtrl* m_tempo_ctrl;
+        wxChoice* m_sample_rate_choice;
 
         wxMenuBar* m_menu_bar;
 
@@ -468,6 +471,7 @@ namespace AriaMaestosa
         void zoomTextChanged(wxCommandEvent& evt);
         void timeSigClicked(wxCommandEvent& evt);
         void toolButtonClicked(wxCommandEvent& evt);
+        void sampleRateChanged(wxCommandEvent& evt);
         //void measureDenomChanged(wxCommandEvent& evt);
         void firstMeasureChanged(wxCommandEvent& evt);
         void loopEndMeasureChanged(wxCommandEvent& evt);

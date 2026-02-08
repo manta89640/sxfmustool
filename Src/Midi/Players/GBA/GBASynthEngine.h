@@ -10,7 +10,6 @@ namespace AriaMaestosa
 {
 
 static const int MAX_ACTIVE_VOICES = 24;
-static const int GBA_SAMPLE_RATE = 44100;
 
 struct ActiveVoice
 {
@@ -67,6 +66,7 @@ class GBASynthEngine
     float m_channelPan[16];
     float m_channelPitchBend[16];
     int m_channelPitchBendRange[16];
+    int m_sampleRate;
     wxMutex m_mutex;
 
     int findFreeVoice();
@@ -86,6 +86,9 @@ public:
     void pitchBend(int value, int channel);
 
     void renderFrames(float* output, int frameCount);
+
+    void setSampleRate(int rate);
+    int getSampleRate() const { return m_sampleRate; }
 
     void reset();
 };

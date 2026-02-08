@@ -10,17 +10,20 @@
 namespace AriaMaestosa
 {
 
-// GBA VBlank rate is ~59.7275 Hz. At 44100 Hz output, that's ~738.56 samples per frame.
-static const double SAMPLES_PER_GBA_FRAME = 44100.0 / 59.7275;
-
 static float midiNoteToFreq(int note)
 {
     return 440.0f * powf(2.0f, (note - 69) / 12.0f);
 }
 
-GBASynthEngine::GBASynthEngine()
+GBASynthEngine::GBASynthEngine() : m_sampleRate(13379)
 {
     reset();
+}
+
+void GBASynthEngine::setSampleRate(int rate)
+{
+    wxMutexLocker lock(m_mutex);
+    m_sampleRate = rate;
 }
 
 void GBASynthEngine::reset()
@@ -149,7 +152,7 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
         v.samplePos = 0.0;
         if (voice->sample && voice->sample->sampleRate > 0)
         {
-            v.sampleStep = (targetFreq / baseFreq) * ((double)voice->sample->sampleRate / (double)GBA_SAMPLE_RATE);
+            v.sampleStep = (targetFreq / baseFreq) * ((double)voice->sample->sampleRate / (double)m_sampleRate);
         }
         else
         {
@@ -159,14 +162,14 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
     else if (voice->type == GBAVoice::SQUARE_1 || voice->type == GBAVoice::SQUARE_2)
     {
         v.squarePhase = 0.0;
-        v.squarePhaseInc = targetFreq / (double)GBA_SAMPLE_RATE;
+        v.squarePhaseInc = targetFreq / (double)m_sampleRate;
     }
     else if (voice->type == GBAVoice::NOISE)
     {
         v.lfsr = 0x7FFF;
         v.noiseTimer = 0.0;
         double noiseFreq = 524288.0 / (voice->period ? 2.0 : 1.0);
-        v.noiseInterval = (double)GBA_SAMPLE_RATE / noiseFreq;
+        v.noiseInterval = (double)m_sampleRate / noiseFreq;
         v.noiseOutput = 0;
     }
 }
@@ -245,12 +248,12 @@ void GBASynthEngine::pitchBend(int value, int channel)
                 if (m_voices[i].voice->sample && m_voices[i].voice->sample->sampleRate > 0)
                 {
                     m_voices[i].sampleStep = (targetFreq / baseFreq) *
-                        ((double)m_voices[i].voice->sample->sampleRate / (double)GBA_SAMPLE_RATE);
+                        ((double)m_voices[i].voice->sample->sampleRate / (double)m_sampleRate);
                 }
             }
             else if (m_voices[i].voice->type == GBAVoice::SQUARE_1 || m_voices[i].voice->type == GBAVoice::SQUARE_2)
             {
-                m_voices[i].squarePhaseInc = targetFreq / (double)GBA_SAMPLE_RATE;
+                m_voices[i].squarePhaseInc = targetFreq / (double)m_sampleRate;
             }
         }
     }
@@ -523,9 +526,9 @@ void GBASynthEngine::renderFrames(float* output, int frameCount)
         {
             // Step envelope at GBA frame rate (~60Hz)
             v.frameSampleCounter += 1.0;
-            if (v.frameSampleCounter >= SAMPLES_PER_GBA_FRAME)
+            if (v.frameSampleCounter >= ((double)m_sampleRate / 59.7275))
             {
-                v.frameSampleCounter -= SAMPLES_PER_GBA_FRAME;
+                v.frameSampleCounter -= ((double)m_sampleRate / 59.7275);
                 computeEnvelopeStep(v);
             }
 

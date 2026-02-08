@@ -151,7 +151,7 @@ void GBASynthManager::initMidiPlayer()
         ma_device_config config = ma_device_config_init(ma_device_type_playback);
         config.playback.format = ma_format_f32;
         config.playback.channels = 2;
-        config.sampleRate = 44100;
+        config.sampleRate = m_engine.getSampleRate();
         config.dataCallback = audioCallback;
         config.pUserData = NULL;
 
@@ -196,6 +196,37 @@ void GBASynthManager::reloadVoicegroup(int voicegroupNum)
     else
     {
         fprintf(stderr, "[GBA Synth] Failed to load voicegroup%03d\n", voicegroupNum);
+    }
+}
+
+void GBASynthManager::setSampleRate(int rate)
+{
+    m_engine.setSampleRate(rate);
+
+    if (g_device_initialized)
+    {
+        ma_device_stop(&g_audio_device);
+        ma_device_uninit(&g_audio_device);
+        g_device_initialized = false;
+
+        g_callback_engine = &m_engine;
+
+        ma_device_config config = ma_device_config_init(ma_device_type_playback);
+        config.playback.format = ma_format_f32;
+        config.playback.channels = 2;
+        config.sampleRate = m_engine.getSampleRate();
+        config.dataCallback = audioCallback;
+        config.pUserData = NULL;
+
+        if (ma_device_init(NULL, &config, &g_audio_device) == MA_SUCCESS)
+        {
+            ma_device_start(&g_audio_device);
+            g_device_initialized = true;
+        }
+        else
+        {
+            fprintf(stderr, "[GBA Synth] Failed to reinitialize audio device at %d Hz\n", rate);
+        }
     }
 }
 
@@ -330,7 +361,9 @@ void GBASynthManager::stopNote()
 void GBASynthManager::exportAudioFile(Sequence* sequence, wxString filepath)
 {
     // Offline render: run sequencer in accelerated mode and write WAV
+    int exportRate = m_engine.getSampleRate();
     GBASynthEngine offlineEngine;
+    offlineEngine.setSampleRate(exportRate);
     offlineEngine.reset();
 
     // Save/restore voicegroup state
@@ -350,7 +383,7 @@ void GBASynthManager::exportAudioFile(Sequence* sequence, wxString filepath)
 
     // Calculate total duration in samples
     double totalMs = (double)songLengthInTicks / ticksPerMs;
-    int totalSamples = (int)(totalMs / 1000.0 * 44100.0) + 44100; // +1 sec padding
+    int totalSamples = (int)(totalMs / 1000.0 * exportRate) + exportRate; // +1 sec padding
 
     // Render in chunks
     std::vector<float> buffer(totalSamples * 2, 0.0f);
@@ -423,7 +456,7 @@ void GBASynthManager::exportAudioFile(Sequence* sequence, wxString filepath)
 
             offlineEngine.renderFrames(&buffer[samplesRendered * 2], chunkSize);
             samplesRendered += chunkSize;
-            currentMs += (double)chunkSize / 44100.0 * 1000.0;
+            currentMs += (double)chunkSize / (double)exportRate * 1000.0;
 
             if (currentMs > totalMs + 1000.0) break;
         }
@@ -448,9 +481,9 @@ void GBASynthManager::exportAudioFile(Sequence* sequence, wxString filepath)
         out.write((char*)&audioFormat, 2);
         short numChannels = 2;
         out.write((char*)&numChannels, 2);
-        int sampleRate = 44100;
+        int sampleRate = exportRate;
         out.write((char*)&sampleRate, 4);
-        int byteRate = 44100 * 2 * 2;
+        int byteRate = exportRate * 2 * 2;
         out.write((char*)&byteRate, 4);
         short blockAlign = 4;
         out.write((char*)&blockAlign, 2);

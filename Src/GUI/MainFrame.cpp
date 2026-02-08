@@ -42,6 +42,7 @@
 #include "Midi/MeasureData.h"
 #include "Midi/Sequence.h"
 #include "Midi/Players/PlatformMidiManager.h"
+#include "Midi/Players/GBA/GBASynthManager.h"
 #include "Midi/CommonMidiUtils.h"
 
 #include "Pickers/InstrumentPicker.h"
@@ -66,6 +67,7 @@
 #include <wx/statbmp.h>
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
+#include <wx/choice.h>
 #include <wx/bmpbuttn.h>
 #include <wx/notebook.h>
 #include <wx/imaglist.h>
@@ -163,6 +165,8 @@ EVT_SPINCTRL(ZOOM, MainFrame::zoomChanged)
 
 EVT_TEXT(LENGTH, MainFrame::songLengthTextChanged)
 EVT_TEXT(ZOOM, MainFrame::zoomTextChanged)
+
+EVT_CHOICE(SAMPLE_RATE_CHOICE, MainFrame::sampleRateChanged)
 
 #ifdef NO_WX_TOOLBAR
 EVT_BUTTON(TOOL_BUTTON, MainFrame::toolButtonClicked)
@@ -772,12 +776,29 @@ void MainFrame::initToolbar()
 #endif
     
     
-    // seems broken for now
-//#if defined(NO_WX_TOOLBAR) || wxMAJOR_VERSION > 2 || (wxMAJOR_VERSION == 2 && wxMINOR_VERSION == 9)
-//    toolbar->AddStretchableSpace();
-//#else
     m_toolbar->AddSeparator();
-//#endif
+
+    {
+        wxArrayString rateChoices;
+        rateChoices.Add(wxT("5734"));
+        rateChoices.Add(wxT("7884"));
+        rateChoices.Add(wxT("10512"));
+        rateChoices.Add(wxT("13379"));
+        rateChoices.Add(wxT("15768"));
+        rateChoices.Add(wxT("18157"));
+        rateChoices.Add(wxT("21024"));
+        rateChoices.Add(wxT("26758"));
+        rateChoices.Add(wxT("31536"));
+        rateChoices.Add(wxT("36314"));
+        rateChoices.Add(wxT("40137"));
+        rateChoices.Add(wxT("42048"));
+        m_sample_rate_choice = new wxChoice(m_toolbar, SAMPLE_RATE_CHOICE,
+                                            wxDefaultPosition, wxDefaultSize, rateChoices);
+        m_sample_rate_choice->SetSelection(3);
+        m_toolbar->add(m_sample_rate_choice, _("Hz"));
+    }
+
+    m_toolbar->AddSeparator();
 
     m_tool1_bitmap.LoadFile( getResourcePrefix()  + wxT("tool1.png") , wxBITMAP_TYPE_PNG);
     m_tool2_bitmap.LoadFile( getResourcePrefix()  + wxT("tool2.png") , wxBITMAP_TYPE_PNG);
@@ -1577,6 +1598,24 @@ void MainFrame::toolButtonClicked(wxCommandEvent& evt)
         ASSERT (false);
     }
 
+}
+
+// ----------------------------------------------------------------------------------------------------------
+
+void MainFrame::sampleRateChanged(wxCommandEvent& evt)
+{
+    if (changingValues) return;
+
+    wxString rateStr = m_sample_rate_choice->GetStringSelection();
+    long rate = 0;
+    rateStr.ToLong(&rate);
+    if (rate <= 0) return;
+
+    GBASynthManager* gbaMgr = dynamic_cast<GBASynthManager*>(PlatformMidiManager::get());
+    if (gbaMgr)
+    {
+        gbaMgr->setSampleRate((int)rate);
+    }
 }
 
 // ----------------------------------------------------------------------------------------------------------

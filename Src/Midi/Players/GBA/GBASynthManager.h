@@ -59,6 +59,7 @@ public:
     virtual bool seq_must_continue();
 
     void reloadVoicegroup(int voicegroupNum);
+    void setSampleRate(int rate);
 };
 
 }
