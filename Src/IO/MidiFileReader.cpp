@@ -588,7 +588,7 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
                     else if ((int)event->GetByte1() == 5) // lyrics
                     {
                         const char* text = (char*) event->GetSysEx()->GetBuf();
-                        
+
                         if (strlen(text) > 0)
                         {
                             wxString s(text, wxConvUTF8, event->GetSysEx()->GetLength());
@@ -599,6 +599,19 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
                             else
                             {
                                 sequence->addTextEvent_import(tick, s, PSEUDO_CONTROLLER_LYRICS);
+                            }
+                        }
+                    }
+                    else if ((int)event->GetByte1() == 6) // marker (GBA loop points)
+                    {
+                        const char* text = (char*) event->GetSysEx()->GetBuf();
+
+                        if (strlen(text) > 0)
+                        {
+                            wxString s(text, wxConvUTF8, event->GetSysEx()->GetLength());
+                            if (s == wxT("[") or s == wxT("]") or s == wxT("][") or s == wxT(":"))
+                            {
+                                sequence->addTextEvent_import(tick, s, PSEUDO_CONTROLLER_LOOP_MARKER);
                             }
                         }
                     }
@@ -807,6 +820,30 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
     }
     
     gseq->setZoom(100);
+
+    // Sync Aria playback loop with imported GBA loop markers
+    {
+        const int textEvtCount = sequence->getTextEventAmount();
+        for (int i = 0; i < textEvtCount; i++)
+        {
+            const TextEvent* evt = sequence->getTextEvent(i);
+            if (evt->getController() != PSEUDO_CONTROLLER_LOOP_MARKER) continue;
+
+            const wxString val = evt->getTextValue();
+            if (val == wxT("["))
+            {
+                int meas = md->measureAtTick(evt->getTick());
+                md->setLoopStartMeasure(meas);
+                sequence->setLoopEnabled(true);
+            }
+            else if (val == wxT("]"))
+            {
+                int meas = md->measureAtTick(evt->getTick());
+                md->setLoopEndMeasure(meas);
+                sequence->setLoopEnabled(true);
+            }
+        }
+    }
 
     sequence->clearUndoStack();
 

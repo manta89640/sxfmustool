@@ -20,6 +20,7 @@
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
 
+#include "Actions/AddTextEvent.h"
 #include "Actions/DuplicateMeasures.h"
 #include "Actions/EditAction.h"
 #include "Actions/InsertEmptyMeasures.h"
@@ -32,6 +33,7 @@
 #include "GUI/MainPane.h"
 #include "GUI/MeasureBar.h"
 #include "Midi/CommonMidiUtils.h"
+#include "Midi/ControllerEvent.h"
 #include "Midi/MeasureData.h"
 #include "Midi/Sequence.h"
 #include "Midi/Track.h"
@@ -41,6 +43,7 @@
 #include "Renderers/Drawable.h"
 #include "Renderers/RenderAPI.h"
 
+#include <algorithm>
 #include <iostream>
 
 
@@ -152,6 +155,10 @@ public:
         deleteTimeSig = Append(3, _("Remove time sig change"));
         Append(4, _("Set playback start here"));
         setLoopEnd = Append(5, _("Set loop end here"));
+        AppendSeparator();
+        Append(6, _("Set GBA Loop Start [ here"));
+        Append(7, _("Set GBA Loop End ] here"));
+        Append(8, _("Clear GBA Loop Points"));
         m_gseq = gseq;
     }
 
@@ -215,7 +222,78 @@ public:
         m_gseq->getModel()->getMeasureData()->setLoopEndMeasure(g_measure_at_click);
         getMainFrame()->updateTopBarAndScrollbars();
     }
-    
+
+    void menuEvent_SetGBALoopStart(wxCommandEvent& evt)
+    {
+        Sequence* seq = m_gseq->getModel();
+        MeasureData* md = seq->getMeasureData();
+        const int tick = md->firstTickInMeasure(g_measure_at_click);
+
+        // Remove any existing "[" marker
+        for (int n = seq->getTextEventAmount() - 1; n >= 0; n--)
+        {
+            const TextEvent* e = seq->getTextEvent(n);
+            if (e->getController() == PSEUDO_CONTROLLER_LOOP_MARKER and
+                e->getTextValue() == wxT("["))
+            {
+                seq->eraseTextEvent(n);
+            }
+        }
+
+        seq->addTextEvent(new TextEvent(PSEUDO_CONTROLLER_LOOP_MARKER, tick, wxT("[")));
+
+        // Sync Aria playback: loop back to this measure
+        md->setLoopStartMeasure(g_measure_at_click);
+        seq->setLoopEnabled(true);
+        getMainFrame()->updateTopBarAndScrollbars();
+    }
+
+    void menuEvent_SetGBALoopEnd(wxCommandEvent& evt)
+    {
+        Sequence* seq = m_gseq->getModel();
+        MeasureData* md = seq->getMeasureData();
+        const int tick = md->firstTickInMeasure(g_measure_at_click);
+
+        // Remove any existing "]" marker
+        for (int n = seq->getTextEventAmount() - 1; n >= 0; n--)
+        {
+            const TextEvent* e = seq->getTextEvent(n);
+            if (e->getController() == PSEUDO_CONTROLLER_LOOP_MARKER and
+                e->getTextValue() == wxT("]"))
+            {
+                seq->eraseTextEvent(n);
+            }
+        }
+
+        seq->addTextEvent(new TextEvent(PSEUDO_CONTROLLER_LOOP_MARKER, tick, wxT("]")));
+
+        // Sync Aria playback: loop ends at this measure
+        md->setLoopEndMeasure(g_measure_at_click);
+        seq->setLoopEnabled(true);
+        getMainFrame()->updateTopBarAndScrollbars();
+    }
+
+    void menuEvent_ClearGBALoopPoints(wxCommandEvent& evt)
+    {
+        Sequence* seq = m_gseq->getModel();
+        MeasureData* md = seq->getMeasureData();
+
+        for (int n = seq->getTextEventAmount() - 1; n >= 0; n--)
+        {
+            const TextEvent* e = seq->getTextEvent(n);
+            if (e->getController() == PSEUDO_CONTROLLER_LOOP_MARKER)
+            {
+                seq->eraseTextEvent(n);
+            }
+        }
+
+        // Reset Aria playback loop
+        md->setLoopStartMeasure(-1);
+        md->setLoopEndMeasure(0);
+        seq->setLoopEnabled(false);
+        getMainFrame()->updateTopBarAndScrollbars();
+    }
+
     DECLARE_EVENT_TABLE();
 };
 
@@ -224,6 +302,9 @@ EVT_MENU(2,UnselectedMenu::insert)
 EVT_MENU(3,UnselectedMenu::removeTimeSig)
 EVT_MENU(4,UnselectedMenu::menuEvent_SetSongStart)
 EVT_MENU(5,UnselectedMenu::menuEvent_SetLoopEnd)
+EVT_MENU(6,UnselectedMenu::menuEvent_SetGBALoopStart)
+EVT_MENU(7,UnselectedMenu::menuEvent_SetGBALoopEnd)
+EVT_MENU(8,UnselectedMenu::menuEvent_ClearGBALoopPoints)
 END_EVENT_TABLE()
 
 }
@@ -417,6 +498,72 @@ void MeasureBar::render(int m_measure_bar_y_arg)
             } // next time sig change
         } // end if expanded mode
     } // next
+
+    // Draw GBA loop markers
+    {
+        Sequence* seq = m_gseq->getModel();
+        const int evtCount = seq->getTextEventAmount();
+        int loopStartPixel = 0;
+        int loopEndPixel = 0;
+        bool hasLoopStart = false;
+        bool hasLoopEnd = false;
+
+        for (int i = 0; i < evtCount; i++)
+        {
+            const TextEvent* evt = seq->getTextEvent(i);
+            if (evt->getController() != PSEUDO_CONTROLLER_LOOP_MARKER) continue;
+
+            const float px = evt->getTick() * zoom + x_initial;
+            const wxString val = evt->getTextValue();
+
+            if (val == wxT("[")) { loopStartPixel = (int)px; hasLoopStart = true; }
+            else if (val == wxT("]")) { loopEndPixel = (int)px; hasLoopEnd = true; }
+        }
+
+        // Draw shaded region between loop start and end, clamped to visible area
+        if (hasLoopStart and hasLoopEnd and loopEndPixel > loopStartPixel)
+        {
+            const int fillLeft  = std::max(loopStartPixel, 0);
+            const int fillRight = std::min(loopEndPixel, width);
+            if (fillRight > fillLeft)
+            {
+                AriaRender::primitives();
+                AriaRender::color(0.6, 0.9, 0.6, 0.3);
+                AriaRender::rect(fillLeft, m_measure_bar_y + 1,
+                                 fillRight, m_measure_bar_y + MEASURE_BAR_H - 1);
+            }
+        }
+
+        // Draw loop start marker "[" if on screen
+        if (hasLoopStart and loopStartPixel >= 0 and loopStartPixel <= width)
+        {
+            AriaRender::primitives();
+            AriaRender::color(0.0, 0.6, 0.0);
+            AriaRender::lineWidth(3);
+            AriaRender::line(loopStartPixel, m_measure_bar_y + 1,
+                             loopStartPixel, m_measure_bar_y + MEASURE_BAR_H - 1);
+            AriaRender::line(loopStartPixel, m_measure_bar_y + 1,
+                             loopStartPixel + 6, m_measure_bar_y + 1);
+            AriaRender::line(loopStartPixel, m_measure_bar_y + MEASURE_BAR_H - 1,
+                             loopStartPixel + 6, m_measure_bar_y + MEASURE_BAR_H - 1);
+            AriaRender::lineWidth(1);
+        }
+
+        // Draw loop end marker "]" if on screen
+        if (hasLoopEnd and loopEndPixel >= 0 and loopEndPixel <= width)
+        {
+            AriaRender::primitives();
+            AriaRender::color(0.8, 0.0, 0.0);
+            AriaRender::lineWidth(3);
+            AriaRender::line(loopEndPixel, m_measure_bar_y + 1,
+                             loopEndPixel, m_measure_bar_y + MEASURE_BAR_H - 1);
+            AriaRender::line(loopEndPixel, m_measure_bar_y + 1,
+                             loopEndPixel - 6, m_measure_bar_y + 1);
+            AriaRender::line(loopEndPixel, m_measure_bar_y + MEASURE_BAR_H - 1,
+                             loopEndPixel - 6, m_measure_bar_y + MEASURE_BAR_H - 1);
+            AriaRender::lineWidth(1);
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------------------------------------

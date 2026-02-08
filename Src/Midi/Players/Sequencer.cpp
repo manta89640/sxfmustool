@@ -19,6 +19,8 @@
 #include "GUI/MainFrame.h"
 #include "Midi/Players/Sequencer.h"
 #include "Midi/CommonMidiUtils.h"
+#include "Midi/ControllerEvent.h"
+#include "Midi/MeasureData.h"
 #include "Midi/Sequence.h"
 #include "Midi/Players/PlatformMidiManager.h"
 
@@ -217,7 +219,32 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
     
     long total_millis = 0;
     long last_millis = 0;
-    
+    long tick_time_offset = 0; // offset between timer-relative ticks and absolute song ticks
+
+    // GBA loop: find [ and ] ticks directly from text events
+    int loopBackTick = 0;
+    int loopEndTick = 0;
+    bool loopBackStateReady = false;
+    jdksmidi::MIDISequencerState* loopBackState = NULL;
+    if (m_seq->isLoopEnabled())
+    {
+        const int startTickOffset = m_seq->getPlaybackStartTick();
+        for (int i = 0; i < m_seq->getTextEventAmount(); i++)
+        {
+            const TextEvent* evt = m_seq->getTextEvent(i);
+            if (evt->getController() != PSEUDO_CONTROLLER_LOOP_MARKER) continue;
+            const int evtTick = evt->getTick() - startTickOffset;
+            if (evt->getTextValue() == wxT("["))
+            {
+                loopBackTick = (evtTick > 0) ? evtTick : 0;
+            }
+            else if (evt->getTextValue() == wxT("]"))
+            {
+                loopEndTick = (evtTick > 0) ? evtTick : 0;
+            }
+        }
+    }
+
     int next_metronome_beat = -1;
     int played_metronome_tick = -1;
     
@@ -233,6 +260,7 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
                 if (not PlatformMidiManager::get()->isRecording() and not m_seq->isLoopEnabled())
                 {
                     std::cerr << "error, failed to retrieve next event, returning" << std::endl;
+                    delete loopBackState;
                     cleanup_sequencer();
                     return;
                 }
@@ -330,6 +358,13 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
 
             previous_tick = tick;
 
+            // Snapshot the sequencer state when we first cross the loop-back point
+            if (not loopBackStateReady and loopBackTick > 0 and (long)previous_tick >= loopBackTick)
+            {
+                loopBackState = new jdksmidi::MIDISequencerState(*jdksequencer->GetState());
+                loopBackStateReady = true;
+            }
+
             if (not jdksequencer->GetNextEventTime(&tick))
             {
                 // if recording, continue as long as user doesn't press stop.
@@ -341,60 +376,63 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
                 }
                 else
                 {
+                    delete loopBackState;
                     cleanup_sequencer();
                     return;
                 }
             }
-            
+
             if ((long)tick < (long) previous_tick) continue; // something wrong about time order...
-            
-            if (previous_tick >= (long)songLengthInTicks)
+
+            // GBA-style loop: jump back to [ when we cross ]
+            if (loopEndTick > 0 and m_seq->isLoopEnabled()
+                and not PlatformMidiManager::get()->isRecording()
+                and (long)previous_tick >= (long)loopEndTick)
             {
-                // looping when recording makes no sense
-                if (m_seq->isLoopEnabled() and not PlatformMidiManager::get()->isRecording())
+                if (loopBackStateReady and loopBackState != NULL)
                 {
-                    tick = 0;
-                    previous_tick = 0;
-                    
-                    jdksequencer->GoToTimeMs( 0 );
-                    if (not jdksequencer->GetNextEventTime(&tick))
-                    {
-                        std::cerr << "[AriaSequenceTimer] failed to get first event time, returning (did you try to play en empty sequence?)" << std::endl;
-                        cleanup_sequencer();
-                        return;
-                    }
-                    
-                    //jdksequencer->ResetAllTracks();
-                    
-                    previous_tick = tick;
-                    
-                    next_event_time = tick / ticks_per_millis;
-                    
-                    timer->reset();
-                    
-                    total_millis = 0;
-                    last_millis = 0;
-                    
-                    next_metronome_beat = -1;
-                    played_metronome_tick = -1;
-                    
-                    next_beat = 0;
-                    
-                    // all notes off on all channels
-                    for (int n = 0; n < 16; n++)
-                    {
-                        PlatformMidiManager::get()->seq_controlchange(0x7B /* all notes off */, 0, n);
-                    }
+                    jdksequencer->SetState(loopBackState);
                 }
                 else
                 {
-                    PlatformMidiManager::get()->seq_notify_current_tick(-1);
-                    if (not PlatformMidiManager::get()->isRecording())
-                    {
-                        std::cout << "done, thread will exit" << std::endl;
-                        cleanup_sequencer();
-                        return;
-                    }
+                    jdksequencer->GoToTime( loopBackTick );
+                }
+
+                if (not jdksequencer->GetNextEventTime(&tick))
+                {
+                    std::cerr << "[AriaSequenceTimer] failed to get event time at loop point, returning" << std::endl;
+                    delete loopBackState;
+                    cleanup_sequencer();
+                    return;
+                }
+
+                if ((long)tick < loopBackTick) tick = loopBackTick;
+                previous_tick = tick;
+
+                tick_time_offset = loopBackTick;
+                next_event_time = (tick - loopBackTick) / ticks_per_millis;
+
+                timer->reset();
+                total_millis = 0;
+                last_millis = 0;
+
+                next_metronome_beat = -1;
+                played_metronome_tick = -1;
+                next_beat = 0;
+
+                continue;
+            }
+
+            // End of song (non-looping)
+            if (previous_tick >= (long)songLengthInTicks)
+            {
+                PlatformMidiManager::get()->seq_notify_current_tick(-1);
+                if (not PlatformMidiManager::get()->isRecording())
+                {
+                    std::cout << "done, thread will exit" << std::endl;
+                    delete loopBackState;
+                    cleanup_sequencer();
+                    return;
                 }
             }
 
@@ -426,11 +464,11 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
         total_millis += delta;
         
         // FIXME; this will not play well with tempo changes
-        PlatformMidiManager::get()->seq_notify_accurate_current_tick(total_millis*ticks_per_millis);
+        PlatformMidiManager::get()->seq_notify_accurate_current_tick(total_millis*ticks_per_millis + tick_time_offset);
         
         if (PlatformMidiManager::get()->isRecording())
         {
-            const int extend_tick = total_millis*ticks_per_millis;
+            const int extend_tick = total_millis*ticks_per_millis + tick_time_offset;
             if (extend_tick >= next_beat)
             {
                 wxCommandEvent evt(wxEVT_EXTEND_TICK, wxID_ANY);
@@ -447,7 +485,8 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
     {
         PlatformMidiManager::get()->seq_controlchange(123 /* all notes off */, 0, c);
     }
-    
+
+    delete loopBackState;
     cleanup_sequencer();
 }
 

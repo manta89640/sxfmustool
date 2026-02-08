@@ -227,6 +227,10 @@ void AriaMaestosa::addTextEventFromSequenceVector(int n, Sequence* sequence,
     {
         type = jdksmidi::META_LYRIC_TEXT;
     }
+    else if (evt->getController() == PSEUDO_CONTROLLER_LOOP_MARKER)
+    {
+        type = jdksmidi::META_MARKER_TEXT;
+    }
     else
     {
         fprintf(stderr, "WARNING: Unknown text event type : %i\n", evt->getController());
