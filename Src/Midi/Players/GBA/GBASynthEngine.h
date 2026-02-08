@@ -50,13 +50,16 @@ struct ActiveVoice
     // Pitch bend (in semitones, fractional)
     float pitchBend;
 
+    // Rhythm (drum) voice — pitch locked to baseMidiKey, no pitch bend
+    bool isRhythm;
+
     ActiveVoice() : active(false), note(0), velocity(0), channel(0), programIndex(0),
                     voice(NULL), samplePos(0), sampleStep(0), phase(OFF),
                     envelopeVolume(0), frameSampleCounter(0), isCgbVoice(false),
                     envelopeCounter(0), envelopeGoal(15), sustainGoal(0),
                     panL(0.5f), panR(0.5f), squarePhase(0), squarePhaseInc(0),
                     lfsr(0x7FFF), noiseTimer(0), noiseInterval(0), noiseOutput(0),
-                    pitchBend(0) {}
+                    pitchBend(0), isRhythm(false) {}
 };
 
 class GBASynthEngine
@@ -79,7 +82,7 @@ class GBASynthEngine
 public:
     GBASynthEngine();
 
-    void noteOn(int note, int velocity, int channel, const GBAVoice* voice);
+    void noteOn(int note, int velocity, int channel, const GBAVoice* voice, bool isRhythm = false);
     void noteOff(int note, int channel);
     void allNotesOff(int channel);
     void controlChange(int controller, int value, int channel);

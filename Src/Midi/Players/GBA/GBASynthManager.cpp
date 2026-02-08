@@ -345,10 +345,14 @@ void GBASynthManager::playNote(int noteNum, int volume, int /*duration*/, int ch
 {
     if (m_playing) return;
 
+    bool isRhythm = false;
+    if (instrument >= 0 && instrument < (int)m_voicegroup.voices.size())
+        isRhythm = (m_voicegroup.voices[instrument].type == GBAVoice::KEYSPLIT_ALL);
+
     const GBAVoice* voice = resolveVoice(instrument, noteNum);
     if (voice)
     {
-        m_engine.noteOn(noteNum, volume, channel, voice);
+        m_engine.noteOn(noteNum, volume, channel, voice, isRhythm);
     }
 }
 
@@ -416,8 +420,12 @@ void GBASynthManager::exportAudioFile(Sequence* sequence, wxString filepath)
                 if (ev.IsNoteOn())
                 {
                     int note = ev.GetNote();
-                    const GBAVoice* voice = resolveVoice(exportProgram[channel], note);
-                    if (voice) offlineEngine.noteOn(note, ev.GetVelocity(), channel, voice);
+                    bool isRhythm = false;
+                    int prog = exportProgram[channel];
+                    if (prog >= 0 && prog < (int)m_voicegroup.voices.size())
+                        isRhythm = (m_voicegroup.voices[prog].type == GBAVoice::KEYSPLIT_ALL);
+                    const GBAVoice* voice = resolveVoice(prog, note);
+                    if (voice) offlineEngine.noteOn(note, ev.GetVelocity(), channel, voice, isRhythm);
                 }
                 else if (ev.IsNoteOff())
                 {
@@ -526,10 +534,15 @@ wxArrayString GBASynthManager::getOutputChoices()
 
 void GBASynthManager::seq_note_on(const int note, const int volume, const int channel)
 {
-    const GBAVoice* voice = resolveVoice(m_channelProgram[channel], note);
+    int prog = m_channelProgram[channel];
+    bool isRhythm = false;
+    if (prog >= 0 && prog < (int)m_voicegroup.voices.size())
+        isRhythm = (m_voicegroup.voices[prog].type == GBAVoice::KEYSPLIT_ALL);
+
+    const GBAVoice* voice = resolveVoice(prog, note);
     if (voice)
     {
-        m_engine.noteOn(note, volume, channel, voice);
+        m_engine.noteOn(note, volume, channel, voice, isRhythm);
     }
 }
 

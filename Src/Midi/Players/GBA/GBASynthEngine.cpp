@@ -73,7 +73,7 @@ int GBASynthEngine::findFreeVoice()
     return lowest;
 }
 
-void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice* voice)
+void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice* voice, bool isRhythm)
 {
     if (!voice || voice->type == GBAVoice::EMPTY) return;
     if (channel < 0 || channel > 15) return;
@@ -99,6 +99,7 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
     v.channel = channel;
     v.voice = voice;
     v.pitchBend = m_channelPitchBend[channel];
+    v.isRhythm = isRhythm;
     v.frameSampleCounter = 0;
 
     // Determine if CGB voice type (counter-based envelope) vs direct sound (additive/multiplicative)
@@ -144,7 +145,10 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
     v.panL = cosf(pan * (float)M_PI * 0.5f);
     v.panR = sinf(pan * (float)M_PI * 0.5f);
 
-    float targetFreq = midiNoteToFreq(note);
+    // For rhythm (drum) voices, pitch is locked to the sub-voice's baseMidiKey
+    // (GBA hardware uses the resolved voice's key, not the MIDI note, for drums)
+    int pitchKey = isRhythm ? voice->baseMidiKey : note;
+    float targetFreq = midiNoteToFreq(pitchKey);
     float baseFreq = midiNoteToFreq(voice->baseMidiKey);
 
     if (voice->type == GBAVoice::DIRECT_SOUND || voice->type == GBAVoice::PROG_WAVE)
@@ -239,6 +243,9 @@ void GBASynthEngine::pitchBend(int value, int channel)
         if (m_voices[i].active && m_voices[i].channel == channel)
         {
             m_voices[i].pitchBend = semitones;
+
+            // GBA hardware ignores pitch bend on rhythm (drum) voices
+            if (m_voices[i].isRhythm) continue;
 
             float targetFreq = midiNoteToFreq(m_voices[i].note) * powf(2.0f, semitones / 12.0f);
             float baseFreq = midiNoteToFreq(m_voices[i].voice->baseMidiKey);
