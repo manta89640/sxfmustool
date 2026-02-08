@@ -268,11 +268,16 @@ bool AriaMaestosa::loadMidiFile(GraphicalSequence* gseq, wxString filepath, std:
                     }
 
 
-                    if (controllerID == 3 or controllerID == 9 or controllerID == 14 or controllerID == 15 or
-                        (controllerID > 19 and controllerID < 32) or (controllerID >= 85 and controllerID <= 87) or
+                    if (controllerID == 14 or controllerID == 15 or
+                        (controllerID > 19 and controllerID < 32))
+                    {
+                        warnings.insert( wxString::Format(_("This MIDI file uses GBA m4a controller #%i. Playback cannot be fully emulated, but data will be preserved."), controllerID) );
+                    }
+                    else if (controllerID == 3 or controllerID == 9 or
+                        (controllerID >= 85 and controllerID <= 87) or
                         controllerID == 89 or controllerID == 90 or (controllerID >= 102 and controllerID <= 119))
                     {
-                        warnings.insert( wxString::Format(_("This MIDI file uses controller #%i, which is not part of the MIDI standard. This information will be discarded."), controllerID) );
+                        warnings.insert( wxString::Format(_("This MIDI file uses controller #%i, which is not part of the MIDI standard. Data will be preserved but may not play back correctly."), controllerID) );
                     }
                     else if (controllerID == 6 or
                              controllerID == 79 or

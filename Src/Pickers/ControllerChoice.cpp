@@ -48,22 +48,22 @@ static const wxString g_controller_names[] =
     wxT("Expression"), // 11
     wxT("Effect 1"), // 12
     wxT("Effect 2"), // 13
-    wxT(""), // 14
-    wxT(""), // 15
+    wxT("GBA: MEMACC Param1"), // 14
+    wxT("GBA: MEMACC Param2"), // 15
     wxT("General 1"), // 16
     wxT("General 2"), // 17
     wxT("General 3"), // 18
     wxT("General 4"), // 19
-    wxT(""), // 20
-    wxT(""), // 21
-    wxT(""), // 22
+    wxT("GBA: Bend Range"), // 20
+    wxT("GBA: LFO Speed"), // 21
+    wxT("GBA: Mod Type"), // 22
     wxT(""), // 23
-    wxT(""), // 24
+    wxT("GBA: Tune"), // 24
     wxT(""), // 25
-    wxT(""), // 26
+    wxT("GBA: LFO Delay"), // 26
     wxT(""), // 27
     wxT(""), // 28
-    wxT(""), // 29
+    wxT("GBA: XCMD Value"), // 29
     // these strings aren't actually controllers, but it'll be quicker to re-use empty spots
     // so they can join the same openGL string list, and thus render faster
     wxT("Pitch Bend"), // 30
@@ -288,10 +288,26 @@ ControllerChoice::ControllerChoice() : wxMenu(), m_controller_label(new Model<wx
     misc_menu->Append( 83 , g_controller_names[83 ] ); // General Purpose 8
      */
 
+    AppendSeparator();
+
+    wxMenu* gba_menu = new wxMenu();
+    Append(wxID_ANY, wxT("GBA m4a"), gba_menu);
+
+    gba_menu->Append( 20, g_controller_names[20] ); // Bend Range
+    gba_menu->Append( 21, g_controller_names[21] ); // LFO Speed
+    gba_menu->Append( 22, g_controller_names[22] ); // Mod Type
+    gba_menu->Append( 24, g_controller_names[24] ); // Tune
+    gba_menu->Append( 26, g_controller_names[26] ); // LFO Delay
+    gba_menu->AppendSeparator();
+    gba_menu->Append( 14, g_controller_names[14] ); // MEMACC Param1
+    gba_menu->Append( 15, g_controller_names[15] ); // MEMACC Param2
+
     Connect(0,204, wxEVT_COMMAND_MENU_SELECTED,
             wxCommandEventHandler(ControllerChoice::menuSelected));
     misc_menu->Connect(0,204, wxEVT_COMMAND_MENU_SELECTED,
                        wxCommandEventHandler(ControllerChoice::menuSelected), NULL, this);
+    gba_menu->Connect(0,204, wxEVT_COMMAND_MENU_SELECTED,
+                      wxCommandEventHandler(ControllerChoice::menuSelected), NULL, this);
 }
 
 // -----------------------------------------------------------------------------------------------------------

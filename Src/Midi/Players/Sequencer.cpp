@@ -278,7 +278,18 @@ void AriaSequenceTimer::run(jdksmidi::MIDISequencer* jdksequencer, const int son
             {
                 const int controllerID = ev.GetController();
                 const int value = ev.GetControllerValue();
-                PlatformMidiManager::get()->seq_controlchange(controllerID, value, channel);
+                if (controllerID == 20)
+                {
+                    // GBA BENDR: emulate as standard MIDI RPN 0x0000 (Pitch Bend Sensitivity)
+                    PlatformMidiManager::get()->seq_controlchange(101, 0, channel);  // RPN MSB
+                    PlatformMidiManager::get()->seq_controlchange(100, 0, channel);  // RPN LSB
+                    PlatformMidiManager::get()->seq_controlchange(6, value, channel); // Data Entry MSB (semitones)
+                    PlatformMidiManager::get()->seq_controlchange(38, 0, channel);   // Data Entry LSB (cents)
+                }
+                else
+                {
+                    PlatformMidiManager::get()->seq_controlchange(controllerID, value, channel);
+                }
             }
             else if (ev.IsPitchBend())
             {
