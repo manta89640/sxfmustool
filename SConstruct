@@ -464,6 +464,30 @@ def compile_Aria(which_os):
     # link program
     executable = env.Program( target = 'Aria', source = object_list)
 
+    # On macOS, package into .app bundle after linking
+    if which_os == "macosx" and 'install' not in COMMAND_LINE_TARGETS:
+        app_name = "Aria Maestosa"
+        app_bundle = app_name + ".app"
+        def build_app_bundle(target, source, env):
+            import shutil
+            contents = os.path.join(app_bundle, "Contents")
+            macos_dir = os.path.join(contents, "MacOS")
+            res_dir = os.path.join(contents, "Resources")
+            os.makedirs(macos_dir, exist_ok=True)
+            shutil.copy2(str(source[0]), os.path.join(macos_dir, app_name))
+            shutil.copy2("OSX/release.plist", os.path.join(contents, "Info.plist"))
+            if os.path.isdir(res_dir):
+                shutil.rmtree(res_dir)
+            shutil.copytree("Resources", res_dir)
+            for f in os.listdir("OSX"):
+                if f.endswith(".icns"):
+                    shutil.copy2(os.path.join("OSX", f), res_dir)
+            return 0
+        bundle_target = env.Command(os.path.join(app_bundle, "Contents", "MacOS", app_name),
+                                    executable, build_app_bundle)
+        env.Default(bundle_target)
+        env.Clean(bundle_target, app_bundle)
+
     # install target
     if 'install' in COMMAND_LINE_TARGETS:
 
