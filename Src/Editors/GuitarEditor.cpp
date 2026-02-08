@@ -31,6 +31,7 @@
 #include "Pickers/TuningPicker.h"
 #include "PreferencesData.h"
 #include "Renderers/RenderAPI.h"
+#include "Midi/Players/PlatformMidiManager.h"
 #include "Singleton.h"
 #include <cstddef>
 
@@ -129,28 +130,31 @@ void GuitarEditor::render(RelativeXCoord mousex_current, int mousey_current,
     }
 
     // ---------------------- draw notes ----------------------------
+    const bool playing = PlatformMidiManager::get()->isPlaying();
+    const int playbackTick = playing ? m_sequence->getPlaybackStartTick() + PlatformMidiManager::get()->getAccurateTick() : -1;
+
     const int noteAmount = m_track->getNoteAmount();
-    
+
     const bool mouseValid = (mousex_current.isValid() and mousex_initial.isValid());
-    
+
     const int mouse_x1 = (mouseValid ? std::min(mousex_current.getRelativeTo(EDITOR), mousex_initial.getRelativeTo(EDITOR)) : -1);
     const int mouse_x2 = (mouseValid ? std::max(mousex_current.getRelativeTo(EDITOR), mousex_initial.getRelativeTo(EDITOR)) : -1);
     const int mouse_y1 = std::min(mousey_current, mousey_initial);
     const int mouse_y2 = std::max(mousey_current, mousey_initial);
-    
+
     for (int n=0; n<noteAmount; n++)
     {
         const int pscroll = m_gsequence->getXScrollInPixels();
         int x1 = m_graphical_track->getNoteStartInPixels(n) - pscroll;
         int x2 = m_graphical_track->getNoteEndInPixels(n)   - pscroll;
 
-        
+
         // don't draw notes that won't visible
         if (x2 < 0    )   continue;
         if (x1 > m_width) break;
 
         AriaRender::primitives();
-        
+
         const int tick   = m_track->getNoteStartInMidiTicks(n);
         const int string = m_track->getNoteString(n);
         const int fret   = m_track->getNoteFret(n);
@@ -160,8 +164,12 @@ void GuitarEditor::render(RelativeXCoord mousex_current, int mousey_current,
 
         const bool isInSelection = m_selecting and x1 > mouse_x1 and x2 < mouse_x2 and
                                    mouse_y1 < y and mouse_y2 > y;
-        
-        if (isInSelection)
+
+        if (playing and playbackTick >= m_track->getNoteStartInMidiTicks(n) and playbackTick <= m_track->getNoteEndInMidiTicks(n))
+        {
+            AriaRender::color(0.0f, 0.85f, 0.0f);
+        }
+        else if (isInSelection)
         {
             AriaRender::color(0.94f, 1.0f, 0.0f);
         }
@@ -189,8 +197,12 @@ void GuitarEditor::render(RelativeXCoord mousex_current, int mousey_current,
             AriaRender::bordered_rect_no_start(x1,  y - 2,  x2 - 1,  y + 2);
 
             // fret number
-            
-            if (isInSelection)
+
+            if (playing and playbackTick >= m_track->getNoteStartInMidiTicks(n) and playbackTick <= m_track->getNoteEndInMidiTicks(n))
+            {
+                AriaRender::color(0.0f, 0.85f, 0.0f);
+            }
+            else if (isInSelection)
             {
                 AriaRender::color(0.94f, 1.0f, 0.0f);
             }

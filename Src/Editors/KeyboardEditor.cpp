@@ -534,6 +534,9 @@ void KeyboardEditor::render(RelativeXCoord mousex_current, int mousey_current,
     const int mouse_y_min = std::min(mousey_current, mousey_initial);
     const int mouse_y_max = std::max(mousey_current, mousey_initial);
 
+    const bool playing = PlatformMidiManager::get()->isPlaying();
+    const int playbackTick = playing ? m_sequence->getPlaybackStartTick() + PlatformMidiManager::get()->getAccurateTick() : -1;
+
     const int noteAmount = m_track->getNoteAmount();
     for (int n=0; n<noteAmount; n++)
     {
@@ -551,10 +554,14 @@ void KeyboardEditor::render(RelativeXCoord mousex_current, int mousey_current,
 
         const int y1 = levelToY(level);
         const int y2 = levelToY(level+1);
-        
+
         if (key_notes[pitch] == KEY_INCLUSION_NONE)
         {
             ariaColor.set(1.0f, 0.0f, 0.0f, 1.0f);
+        }
+        else if (playing and playbackTick >= m_track->getNoteStartInMidiTicks(n) and playbackTick <= m_track->getNoteEndInMidiTicks(n))
+        {
+            ariaColor.set(0.0f, 0.85f, 0.0f, 1.0f);
         }
         else if (m_selecting and x1 > mouse_x_min and x2 < mouse_x_max and
                  y1 + m_y_step/2 > mouse_y_min and y1 + m_y_step/2 < mouse_y_max)

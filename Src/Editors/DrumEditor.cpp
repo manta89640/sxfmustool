@@ -905,6 +905,9 @@ void DrumEditor::render(RelativeXCoord mousex_current, int mousey_current,
     const int mouse_y1 = std::min(mousey_current, mousey_initial);
     const int mouse_y2 = std::max(mousey_current, mousey_initial);
     
+    const bool playing = PlatformMidiManager::get()->isPlaying();
+    const int playbackTick = playing ? m_sequence->getPlaybackStartTick() + PlatformMidiManager::get()->getAccurateTick() : -1;
+
     const int noteAmount = m_track->getNoteAmount();
     for (int n=0; n<noteAmount; n++)
     {
@@ -919,13 +922,17 @@ void DrumEditor::render(RelativeXCoord mousex_current, int mousey_current,
         ASSERT(m_track->getNotePitchID(n) < 128);
 
         const int drumIDInVector = m_midi_key_to_vector_ID[ m_track->getNotePitchID(n) ];
-        
+
         if (drumIDInVector == -1) continue;
 
         const float volume = m_track->getNoteVolume(n)/127.0;
         const int drumy = getYForDrum(drumIDInVector);
 
-        if (m_selecting and drumx > mouse_x1 and drumx < mouse_x2 and drumy + 5 > mouse_y1 and drumy + 5 < mouse_y2)
+        if (playing and playbackTick >= m_track->getNoteStartInMidiTicks(n) and playbackTick <= m_track->getNoteEndInMidiTicks(n))
+        {
+            AriaRender::color(0.0f, 0.85f, 0.0f);
+        }
+        else if (m_selecting and drumx > mouse_x1 and drumx < mouse_x2 and drumy + 5 > mouse_y1 and drumy + 5 < mouse_y2)
         {
             AriaRender::color(0.94f, 1.0f, 0.0f);
         }

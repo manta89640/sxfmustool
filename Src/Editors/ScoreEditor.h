@@ -192,8 +192,8 @@ namespace AriaMaestosa
         void renderNote_pass1(NoteRenderInfo& renderInfo, const AriaColor& baseColor);
         
         /** helper method for rendering */
-        void renderNote_pass2(NoteRenderInfo& renderInfo, ScoreAnalyser* analyser, 
-                            const AriaColor& baseColor);
+        void renderNote_pass2(NoteRenderInfo& renderInfo, ScoreAnalyser* analyser,
+                            const AriaColor& baseColor, int playbackTick);
         
         void renderTrack(Track* track, const TrackRenderContext& ctx,
                         bool focus, bool enableSelection, bool renderSilences,

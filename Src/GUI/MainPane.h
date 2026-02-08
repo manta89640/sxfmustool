@@ -96,6 +96,7 @@ namespace AriaMaestosa
         // used during playback
         int m_follow_playback_time;
         int m_last_tick;
+        bool m_saved_follow_playback;
 
         bool m_scroll_to_playback_position;
 

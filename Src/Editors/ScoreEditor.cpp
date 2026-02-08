@@ -680,10 +680,14 @@ void ScoreEditor::renderNote_pass1(NoteRenderInfo& renderInfo, const AriaColor& 
 
 // ----------------------------------------------------------------------------------------------------------
 
-void ScoreEditor::renderNote_pass2(NoteRenderInfo& renderInfo, ScoreAnalyser* analyser, const AriaColor& baseColor)
+void ScoreEditor::renderNote_pass2(NoteRenderInfo& renderInfo, ScoreAnalyser* analyser, const AriaColor& baseColor, int playbackTick)
 {
     AriaRender::primitives();
-    if (renderInfo.m_selected) AriaRender::color(1,0,0);
+    if (playbackTick >= 0 and playbackTick >= renderInfo.getTick() and playbackTick <= renderInfo.getTick() + renderInfo.getTickLength())
+    {
+        AriaRender::color(0.0f, 0.85f, 0.0f);
+    }
+    else if (renderInfo.m_selected) AriaRender::color(1,0,0);
     else                       AriaRender::color(baseColor.r, baseColor.g, baseColor.b);
 
     // stem
@@ -1457,11 +1461,14 @@ void ScoreEditor::renderScore(ScoreAnalyser* analyser, const int silences_y,
     analyser->analyseNoteInfo();
 
     // triplet signs, tied notes, flags and beams
+    const bool scorePlaying = PlatformMidiManager::get()->isPlaying();
+    const int scorePlaybackTick = scorePlaying ? m_sequence->getPlaybackStartTick() + PlatformMidiManager::get()->getAccurateTick() : -1;
+
     visibleNoteAmount = analyser->m_note_render_info.size();
     for (int i=0; i<visibleNoteAmount; i++)
     {
         ASSERT_E(i,<,(int)analyser->m_note_render_info.size());
-        renderNote_pass2(analyser->m_note_render_info[i], analyser, baseColor);
+        renderNote_pass2(analyser->m_note_render_info[i], analyser, baseColor, scorePlaybackTick);
     }
     AriaRender::setImageState(AriaRender::STATE_NOTE);
 }

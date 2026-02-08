@@ -1334,10 +1334,11 @@ void MainPane::keyPressed(wxKeyEvent& evt)
     const bool shiftDown   = evt.ShiftDown();
     const bool altDown     = evt.AltDown();
 
-    // ---------------- play selected notes -----------------
+    // ---------------- play/pause -----------------
     if (keyCode == WXK_SPACE)
     {
-        seq->spacePressed();
+        wxCommandEvent dummyEvt;
+        getMainFrame()->playClicked(dummyEvt);
     }
     
 #ifdef _MORE_DEBUG_CHECKS
@@ -1535,6 +1536,8 @@ void MainPane::enterPlayLoop()
     Sequence* seq = getMainFrame()->getCurrentSequence();
     m_follow_playback_time = seq->getMeasureData()->defaultMeasureLengthInTicks();
     m_last_tick = -1;
+    m_saved_follow_playback = seq->isFollowPlaybackEnabled();
+    seq->enableFollowPlayback(true);
     Core::activateRenderLoop(true);
 }
 
@@ -1543,10 +1546,13 @@ void MainPane::enterPlayLoop()
 void MainPane::exitPlayLoop()
 {
     PlatformMidiManager* midi = PlatformMidiManager::get();
-    
+
     if (midi->isRecording()) midi->stopRecording();
     midi->stop();
-    
+
+    Sequence* seq = getMainFrame()->getCurrentSequence();
+    seq->enableFollowPlayback(m_saved_follow_playback);
+
     getMainFrame()->toolsExitPlaybackMode();
     Core::activateRenderLoop(false);
     setCurrentTick( -1 );
