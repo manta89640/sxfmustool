@@ -17,7 +17,8 @@ class GBASynthManager : public PlatformMidiManager
     int m_voicegroupNum;
 
     bool m_playing;
-    bool m_threadShouldContinue;
+    volatile bool m_threadShouldContinue;
+    volatile bool m_threadRunning;
     int m_currentTick;
     int m_accurateTick;
 
@@ -28,6 +29,8 @@ class GBASynthManager : public PlatformMidiManager
 public:
     GBASynthManager();
     virtual ~GBASynthManager();
+
+    void notifyThreadDone();
 
     virtual void initMidiPlayer();
     virtual void freeMidiPlayer();

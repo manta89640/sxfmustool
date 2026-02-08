@@ -98,7 +98,13 @@ public:
     {
         AriaSequenceTimer timer(m_sequence);
         timer.run(m_jdksequencer, m_songLengthInTicks);
-        m_manager->stop();
+        // Only call stop() if the song ended naturally (not already stopped by user).
+        // If user pressed stop and then started new playback, m_threadShouldContinue
+        // is now true for the NEW playback — but we waited for this thread to finish
+        // in playSequence(), so this path won't execute in that case.
+        if (m_manager->seq_must_continue())
+            m_manager->stop();
+        m_manager->notifyThreadDone();
         return 0;
     }
 };
@@ -107,10 +113,16 @@ public:
 
 GBASynthManager::GBASynthManager()
     : m_parser(NULL), m_voicegroupNum(-1), m_playing(false),
-      m_threadShouldContinue(false), m_currentTick(0), m_accurateTick(0),
+      m_threadShouldContinue(false), m_threadRunning(false),
+      m_currentTick(0), m_accurateTick(0),
       m_sequence(NULL)
 {
     for (int i = 0; i < 16; i++) m_channelProgram[i] = 0;
+}
+
+void GBASynthManager::notifyThreadDone()
+{
+    m_threadRunning = false;
 }
 
 GBASynthManager::~GBASynthManager()
@@ -234,10 +246,22 @@ bool GBASynthManager::playSequence(Sequence* sequence, int* startTick)
 {
     if (m_playing) return false;
 
+    // Wait for previous sequencer thread to fully exit before starting a new one.
+    // This prevents the old thread from corrupting new playback state (calling stop(),
+    // sending all-notes-off, or sharing the global timer pointer in Sequencer.cpp).
+    int waitMs = 0;
+    while (m_threadRunning && waitMs < 1000)
+    {
+        wxThread::Sleep(2);
+        waitMs += 2;
+    }
+
     m_engine.reset();
+    for (int i = 0; i < 16; i++) m_channelProgram[i] = 0;
     m_sequence = sequence;
     m_playing = true;
     m_threadShouldContinue = true;
+    m_threadRunning = true;
 
     // Try to load the correct voicegroup for this file
     if (m_parser)
@@ -307,10 +331,19 @@ bool GBASynthManager::playSelected(Sequence* sequence, int* startTick)
 {
     if (m_playing) return false;
 
+    int waitMs = 0;
+    while (m_threadRunning && waitMs < 1000)
+    {
+        wxThread::Sleep(2);
+        waitMs += 2;
+    }
+
     m_engine.reset();
+    for (int i = 0; i < 16; i++) m_channelProgram[i] = 0;
     m_sequence = sequence;
     m_playing = true;
     m_threadShouldContinue = true;
+    m_threadRunning = true;
 
     GBASequencerThread* thread = new GBASequencerThread(sequence, true, this);
     thread->go(startTick);

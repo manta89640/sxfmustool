@@ -15,7 +15,92 @@ static float midiNoteToFreq(int note)
     return 440.0f * powf(2.0f, (note - 69) / 12.0f);
 }
 
-GBASynthEngine::GBASynthEngine() : m_sampleRate(13379)
+// GBA CGB frequency lookup tables (from m4a_tables.c)
+// 132 entries: 11 octaves x 12 semitones. High nibble = shift, low nibble = table index.
+static const uint8_t gCgbScaleTable[] = {
+    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B,
+    0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B,
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B,
+    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B,
+    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B,
+    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B,
+    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B,
+    0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B,
+    0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0x9B,
+    0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB,
+};
+
+static const int16_t gCgbFreqTable[] = {
+    -2004, -1891, -1785, -1685, -1591, -1501,
+    -1417, -1337, -1262, -1192, -1125, -1062,
+};
+
+static const uint8_t gNoiseTable[] = {
+    0xD7, 0xD6, 0xD5, 0xD4, 0xC7, 0xC6, 0xC5, 0xC4,
+    0xB7, 0xB6, 0xB5, 0xB4, 0xA7, 0xA6, 0xA5, 0xA4,
+    0x97, 0x96, 0x95, 0x94, 0x87, 0x86, 0x85, 0x84,
+    0x77, 0x76, 0x75, 0x74, 0x67, 0x66, 0x65, 0x64,
+    0x57, 0x56, 0x55, 0x54, 0x47, 0x46, 0x45, 0x44,
+    0x37, 0x36, 0x35, 0x34, 0x27, 0x26, 0x25, 0x24,
+    0x17, 0x16, 0x15, 0x14, 0x07, 0x06, 0x05, 0x04,
+    0x03, 0x02, 0x01, 0x00,
+};
+
+// Matches MidiKeyToCgbFreq from m4a.c for channels 1-3 (square/wave).
+// Returns hardware frequency register value (11-bit, with +2048 offset).
+static int cgbMidiKeyToReg(int key, int fineAdjust)
+{
+    if (key <= 35) { fineAdjust = 0; key = 0; }
+    else {
+        key -= 36;
+        if (key > 130) { key = 130; fineAdjust = 255; }
+    }
+    int32_t val1 = gCgbScaleTable[key];
+    val1 = gCgbFreqTable[val1 & 0xF] >> (val1 >> 4);
+    int32_t val2 = gCgbScaleTable[key + 1];
+    val2 = gCgbFreqTable[val2 & 0xF] >> (val2 >> 4);
+    return val1 + ((fineAdjust * (val2 - val1)) >> 8) + 2048;
+}
+
+// Square wave: hardware frequency = 131072 / (2048 - reg) Hz
+static double cgbSquareRegToHz(int reg)
+{
+    int denom = 2048 - reg;
+    if (denom <= 0) return 131072.0;
+    return 131072.0 / (double)denom;
+}
+
+// Wave channel: hardware frequency = 65536 / (2048 - reg) Hz (half of square)
+static double cgbWaveRegToHz(int reg)
+{
+    int denom = 2048 - reg;
+    if (denom <= 0) return 65536.0;
+    return 65536.0 / (double)denom;
+}
+
+// Noise: decode NR43 register to clock frequency
+// bits 7-4 = shift clock (s), bits 2-0 = dividing ratio (r), bit 3 = LFSR width (ignored here)
+static double noiseNR43ToHz(uint8_t nr43)
+{
+    int shift = (nr43 >> 4) & 0xF;
+    int ratio = nr43 & 0x7;
+    double r = (ratio == 0) ? 0.5 : (double)ratio;
+    return 524288.0 / (r * (double)(1 << (shift + 1)));
+}
+
+// Look up noise frequency from MIDI key (matches MidiKeyToCgbFreq for channel 4)
+static double noiseKeyToHz(int key)
+{
+    if (key <= 20) key = 0;
+    else {
+        key -= 21;
+        if (key > 59) key = 59;
+    }
+    return noiseNR43ToHz(gNoiseTable[key]);
+}
+
+GBASynthEngine::GBASynthEngine() : m_sampleRate(13379), m_nextTriggerOrder(0)
 {
     reset();
 }
@@ -33,7 +118,9 @@ void GBASynthEngine::reset()
     {
         m_voices[i].active = false;
         m_voices[i].phase = ActiveVoice::OFF;
+        m_voices[i].triggerOrder = 0;
     }
+    m_nextTriggerOrder = 0;
     for (int i = 0; i < 16; i++)
     {
         m_channelVolume[i] = 1.0f;
@@ -45,32 +132,56 @@ void GBASynthEngine::reset()
 
 int GBASynthEngine::findFreeVoice()
 {
-    // Find inactive voice
+    // 1. Find inactive voice
     for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
     {
         if (!m_voices[i].active) return i;
     }
-    // Steal oldest voice in release phase
+
+    // 2. Steal release-phase voice with lowest envelope volume (most faded out).
+    //    This is more audibly correct than stealing the first release voice found.
+    int bestRelease = -1;
+    int bestReleaseVol = 9999;
     for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
     {
-        if (m_voices[i].phase == ActiveVoice::RELEASE)
+        if (m_voices[i].phase == ActiveVoice::RELEASE && m_voices[i].envelopeVolume < bestReleaseVol)
         {
-            m_voices[i].active = false;
-            return i;
+            bestReleaseVol = m_voices[i].envelopeVolume;
+            bestRelease = i;
         }
     }
-    // Steal voice with lowest envelope volume
-    int lowest = 0;
+    if (bestRelease >= 0) return bestRelease;
+
+    // 3. No release voices available. Steal the non-ATTACK voice with the lowest
+    //    envelope volume. ATTACK voices are protected to prevent simultaneous
+    //    notes (especially drums) from stealing each other before producing audio.
+    int lowest = -1;
     int lowestVol = 9999;
     for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
     {
+        if (m_voices[i].phase == ActiveVoice::ATTACK) continue;
         if (m_voices[i].envelopeVolume < lowestVol)
         {
             lowestVol = m_voices[i].envelopeVolume;
             lowest = i;
         }
     }
-    return lowest;
+    if (lowest >= 0) return lowest;
+
+    // 4. All voices in ATTACK (many simultaneous noteOn before any rendering).
+    //    Steal the OLDEST triggered voice (lowest triggerOrder) for deterministic
+    //    behavior regardless of audio callback timing.
+    int oldest = 0;
+    int oldestOrder = m_voices[0].triggerOrder;
+    for (int i = 1; i < MAX_ACTIVE_VOICES; i++)
+    {
+        if (m_voices[i].triggerOrder < oldestOrder)
+        {
+            oldestOrder = m_voices[i].triggerOrder;
+            oldest = i;
+        }
+    }
+    return oldest;
 }
 
 void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice* voice, bool isRhythm)
@@ -101,6 +212,7 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
     v.pitchBend = m_channelPitchBend[channel];
     v.isRhythm = isRhythm;
     v.frameSampleCounter = 0;
+    v.triggerOrder = m_nextTriggerOrder++;
 
     // Determine if CGB voice type (counter-based envelope) vs direct sound (additive/multiplicative)
     v.isCgbVoice = (voice->type == GBAVoice::SQUARE_1 || voice->type == GBAVoice::SQUARE_2
@@ -148,11 +260,11 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
     // For rhythm (drum) voices, pitch is locked to the sub-voice's baseMidiKey
     // (GBA hardware uses the resolved voice's key, not the MIDI note, for drums)
     int pitchKey = isRhythm ? voice->baseMidiKey : note;
-    float targetFreq = midiNoteToFreq(pitchKey);
-    float baseFreq = midiNoteToFreq(voice->baseMidiKey);
 
-    if (voice->type == GBAVoice::DIRECT_SOUND || voice->type == GBAVoice::PROG_WAVE)
+    if (voice->type == GBAVoice::DIRECT_SOUND)
     {
+        float targetFreq = midiNoteToFreq(pitchKey);
+        float baseFreq = midiNoteToFreq(voice->baseMidiKey);
         v.samplePos = 0.0;
         if (voice->sample && voice->sample->sampleRate > 0)
         {
@@ -163,19 +275,43 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
             v.sampleStep = 1.0;
         }
     }
+    else if (voice->type == GBAVoice::PROG_WAVE)
+    {
+        // CGB wave channel: uses MidiKeyToCgbFreq tables, plays at 65536/(2048-reg) Hz
+        int reg = cgbMidiKeyToReg(pitchKey, 0);
+        double freq = cgbWaveRegToHz(reg);
+        v.samplePos = 0.0;
+        int numSamples = (voice->sample && !voice->sample->pcmData.empty())
+                         ? (int)voice->sample->pcmData.size() : 32;
+        v.sampleStep = freq * (double)numSamples / (double)m_sampleRate;
+    }
     else if (voice->type == GBAVoice::SQUARE_1 || voice->type == GBAVoice::SQUARE_2)
     {
+        // CGB square channels: uses MidiKeyToCgbFreq tables, plays at 131072/(2048-reg) Hz
+        int reg = cgbMidiKeyToReg(pitchKey, 0);
+        double freq = cgbSquareRegToHz(reg);
         v.squarePhase = 0.0;
-        v.squarePhaseInc = targetFreq / (double)m_sampleRate;
+        v.squarePhaseInc = freq / (double)m_sampleRate;
     }
     else if (voice->type == GBAVoice::NOISE)
     {
+        // CGB noise channel: uses gNoiseTable lookup for frequency, voice->period controls LFSR width
+        double noiseFreq = noiseKeyToHz(pitchKey);
         v.lfsr = 0x7FFF;
         v.noiseTimer = 0.0;
-        double noiseFreq = 524288.0 / (voice->period ? 2.0 : 1.0);
         v.noiseInterval = (double)m_sampleRate / noiseFreq;
         v.noiseOutput = 0;
+        v.noiseWidth7Bit = (voice->period != 0);
     }
+
+    // Run one immediate envelope step, matching GBA's VBlank-synchronized behavior.
+    // On GBA, event processing and envelope stepping happen in the same frame
+    // (events first, then SoundMainRAM advances envelopes). Without this, short
+    // notes (especially drums) can have noteOff arrive before any renderFrames()
+    // advances the envelope past 0 — causing the multiplicative release to compute
+    // (0 * release) >> 8 = 0, killing the voice silently.
+    if (v.phase == ActiveVoice::ATTACK)
+        computeEnvelopeStep(v);
 }
 
 void GBASynthEngine::noteOff(int note, int channel)
@@ -247,11 +383,12 @@ void GBASynthEngine::pitchBend(int value, int channel)
             // GBA hardware ignores pitch bend on rhythm (drum) voices
             if (m_voices[i].isRhythm) continue;
 
-            float targetFreq = midiNoteToFreq(m_voices[i].note) * powf(2.0f, semitones / 12.0f);
-            float baseFreq = midiNoteToFreq(m_voices[i].voice->baseMidiKey);
+            int pitchKey = m_voices[i].note;
 
-            if (m_voices[i].voice->type == GBAVoice::DIRECT_SOUND || m_voices[i].voice->type == GBAVoice::PROG_WAVE)
+            if (m_voices[i].voice->type == GBAVoice::DIRECT_SOUND)
             {
+                float targetFreq = midiNoteToFreq(pitchKey) * powf(2.0f, semitones / 12.0f);
+                float baseFreq = midiNoteToFreq(m_voices[i].voice->baseMidiKey);
                 if (m_voices[i].voice->sample && m_voices[i].voice->sample->sampleRate > 0)
                 {
                     m_voices[i].sampleStep = (targetFreq / baseFreq) *
@@ -260,7 +397,30 @@ void GBASynthEngine::pitchBend(int value, int channel)
             }
             else if (m_voices[i].voice->type == GBAVoice::SQUARE_1 || m_voices[i].voice->type == GBAVoice::SQUARE_2)
             {
-                m_voices[i].squarePhaseInc = targetFreq / (double)m_sampleRate;
+                // GBA-accurate: split semitones into integer key offset + fine adjust
+                int intSemi = (int)floorf(semitones);
+                int fineAdjust = (int)((semitones - (float)intSemi) * 256.0f);
+                if (fineAdjust > 255) fineAdjust = 255;
+                int reg = cgbMidiKeyToReg(pitchKey + intSemi, fineAdjust);
+                m_voices[i].squarePhaseInc = cgbSquareRegToHz(reg) / (double)m_sampleRate;
+            }
+            else if (m_voices[i].voice->type == GBAVoice::PROG_WAVE)
+            {
+                int intSemi = (int)floorf(semitones);
+                int fineAdjust = (int)((semitones - (float)intSemi) * 256.0f);
+                if (fineAdjust > 255) fineAdjust = 255;
+                int reg = cgbMidiKeyToReg(pitchKey + intSemi, fineAdjust);
+                double freq = cgbWaveRegToHz(reg);
+                int numSamples = (m_voices[i].voice->sample && !m_voices[i].voice->sample->pcmData.empty())
+                                 ? (int)m_voices[i].voice->sample->pcmData.size() : 32;
+                m_voices[i].sampleStep = freq * (double)numSamples / (double)m_sampleRate;
+            }
+            else if (m_voices[i].voice->type == GBAVoice::NOISE)
+            {
+                // Noise pitch bend: re-lookup noise table with modified key (discrete steps)
+                int intSemi = (int)floorf(semitones);
+                double noiseFreq = noiseKeyToHz(pitchKey + intSemi);
+                m_voices[i].noiseInterval = (double)m_sampleRate / noiseFreq;
             }
         }
     }
@@ -491,6 +651,9 @@ float GBASynthEngine::renderNoise(ActiveVoice& v)
         v.noiseTimer -= v.noiseInterval;
         uint16_t bit = ((v.lfsr >> 0) ^ (v.lfsr >> 1)) & 1;
         v.lfsr = (v.lfsr >> 1) | (bit << 14);
+        // In 7-bit mode, bit 6 is also set from the XOR (shorter period, more tonal)
+        if (v.noiseWidth7Bit)
+            v.lfsr = (v.lfsr & ~(1 << 6)) | (bit << 6);
         v.noiseOutput = (v.lfsr & 1) ? 64 : -64;
     }
     return (float)v.noiseOutput / 128.0f;
