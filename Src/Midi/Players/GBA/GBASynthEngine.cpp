@@ -100,7 +100,7 @@ static double noiseKeyToHz(int key)
     return noiseNR43ToHz(gNoiseTable[key]);
 }
 
-GBASynthEngine::GBASynthEngine() : m_sampleRate(13379), m_nextTriggerOrder(0)
+GBASynthEngine::GBASynthEngine() : m_sampleRate(13379), m_nextTriggerOrder(0), m_globalFrameCounter(0)
 {
     reset();
 }
@@ -121,12 +121,14 @@ void GBASynthEngine::reset()
         m_voices[i].triggerOrder = 0;
     }
     m_nextTriggerOrder = 0;
+    m_globalFrameCounter = 0;
     for (int i = 0; i < 16; i++)
     {
         m_channelVolume[i] = 1.0f;
         m_channelPan[i] = 0.5f;
         m_channelPitchBend[i] = 0.0f;
         m_channelPitchBendRange[i] = 2;
+        m_channelMod[i] = ChannelModState();
     }
 }
 
@@ -138,8 +140,19 @@ int GBASynthEngine::findFreeVoice()
         if (!m_voices[i].active) return i;
     }
 
-    // 2. Steal release-phase voice with lowest envelope volume (most faded out).
-    //    This is more audibly correct than stealing the first release voice found.
+    // 2. Steal echo-phase voice first (lowest priority), then release-phase.
+    int bestEcho = -1;
+    int bestEchoVol = 9999;
+    for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
+    {
+        if (m_voices[i].phase == ActiveVoice::ECHO && m_voices[i].envelopeVolume < bestEchoVol)
+        {
+            bestEchoVol = m_voices[i].envelopeVolume;
+            bestEcho = i;
+        }
+    }
+    if (bestEcho >= 0) return bestEcho;
+
     int bestRelease = -1;
     int bestReleaseVol = 9999;
     for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
@@ -211,7 +224,8 @@ void GBASynthEngine::noteOn(int note, int velocity, int channel, const GBAVoice*
     v.voice = voice;
     v.pitchBend = m_channelPitchBend[channel];
     v.isRhythm = isRhythm;
-    v.frameSampleCounter = 0;
+    v.pseudoEchoVol = m_channelMod[channel].pseudoEchoVol;
+    v.pseudoEchoLen = m_channelMod[channel].pseudoEchoLen;
     v.triggerOrder = m_nextTriggerOrder++;
 
     // Determine if CGB voice type (counter-based envelope) vs direct sound (additive/multiplicative)
@@ -320,7 +334,8 @@ void GBASynthEngine::noteOff(int note, int channel)
     for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
     {
         if (m_voices[i].active && m_voices[i].note == note && m_voices[i].channel == channel
-            && m_voices[i].phase != ActiveVoice::RELEASE && m_voices[i].phase != ActiveVoice::OFF)
+            && m_voices[i].phase != ActiveVoice::RELEASE && m_voices[i].phase != ActiveVoice::ECHO
+            && m_voices[i].phase != ActiveVoice::OFF)
         {
             m_voices[i].phase = ActiveVoice::RELEASE;
             if (m_voices[i].isCgbVoice)
@@ -351,6 +366,15 @@ void GBASynthEngine::controlChange(int controller, int value, int channel)
     wxMutexLocker lock(m_mutex);
     switch (controller)
     {
+        case 1: // MOD — modulation depth
+            m_channelMod[channel].mod = (uint8_t)value;
+            if (value == 0)
+            {
+                m_channelMod[channel].modM = 0;
+                m_channelMod[channel].lfoSpeedC = 0;
+                m_channelMod[channel].lfoDelayC = m_channelMod[channel].lfoDelay;
+            }
+            break;
         case 7: // Volume
             m_channelVolume[channel] = (float)value / 127.0f;
             break;
@@ -360,9 +384,118 @@ void GBASynthEngine::controlChange(int controller, int value, int channel)
         case 6: // Data Entry MSB (for RPN pitch bend range)
             m_channelPitchBendRange[channel] = value;
             break;
+        case 21: // LFOS — LFO speed
+            m_channelMod[channel].lfoSpeed = (uint8_t)value;
+            if (value == 0)
+            {
+                m_channelMod[channel].modM = 0;
+                m_channelMod[channel].lfoSpeedC = 0;
+                m_channelMod[channel].lfoDelayC = m_channelMod[channel].lfoDelay;
+            }
+            break;
+        case 22: // MODT — mod type (0=vibrato, 1=tremolo, 2=auto-pan)
+            m_channelMod[channel].modT = (uint8_t)value;
+            break;
+        case 24: // TUNE — fine tuning (value-64 = signed)
+            m_channelMod[channel].tune = (int8_t)(value - 64);
+            break;
+        case 26: // LFODL — LFO delay in frames
+            m_channelMod[channel].lfoDelay = (uint8_t)value;
+            m_channelMod[channel].lfoDelayC = (uint8_t)value;
+            break;
+        case 29: // XCMD — execute extended command
+        {
+            uint8_t type = m_channelMod[channel].xcmdType;
+            if (type == 8) m_channelMod[channel].pseudoEchoVol = (uint8_t)value;
+            if (type == 9) m_channelMod[channel].pseudoEchoLen = (uint8_t)value;
+            break;
+        }
+        case 30: // XCMD_TYPE — extended command type selector
+            m_channelMod[channel].xcmdType = (uint8_t)value;
+            break;
         case 123: // All notes off
             allNotesOff(channel);
             break;
+    }
+}
+
+// Exact GBA triangle wave LFO algorithm from m4a_1.s MPlayMain
+void GBASynthEngine::updateLFO(int ch)
+{
+    ChannelModState& m = m_channelMod[ch];
+    if (m.lfoSpeed == 0 || m.mod == 0)
+    {
+        m.modM = 0;
+        return;
+    }
+    if (m.lfoDelayC > 0)
+    {
+        m.lfoDelayC--;
+        return;
+    }
+    m.lfoSpeedC += m.lfoSpeed; // uint8 wraps at 256
+    int wave;
+    if (m.lfoSpeedC < 64)
+        wave = (int)(int8_t)m.lfoSpeedC;   // 0→63, rising
+    else
+        wave = 128 - (int)m.lfoSpeedC;     // 64→-127, falling
+    m.modM = (int8_t)(((int)m.mod * wave) >> 6);
+}
+
+// Recalculate voice frequency from base note + bend + tune + vibrato
+void GBASynthEngine::updateVoicePitch(ActiveVoice& v)
+{
+    if (!v.active || !v.voice) return;
+    if (v.isRhythm) return; // GBA ignores pitch mod on drums
+
+    // Compute total pitch offset in 256ths of semitone (matching m4a.c TrkVolPitSet)
+    int tuneX = (int)m_channelMod[v.channel].tune * 4;
+    float bendSemi = v.pitchBend;
+    int bendX = (int)(bendSemi * 256.0f);
+    int vibratoX = 0;
+    if (m_channelMod[v.channel].modT == 0) // vibrato
+        vibratoX = 16 * (int)m_channelMod[v.channel].modM;
+    int totalX = bendX + tuneX + vibratoX;
+    float totalSemi = (float)totalX / 256.0f;
+
+    int pitchKey = v.note;
+
+    if (v.voice->type == GBAVoice::DIRECT_SOUND)
+    {
+        float targetFreq = midiNoteToFreq(pitchKey) * powf(2.0f, totalSemi / 12.0f);
+        float baseFreq = midiNoteToFreq(v.voice->baseMidiKey);
+        if (v.voice->sample && v.voice->sample->sampleRate > 0)
+        {
+            v.sampleStep = (targetFreq / baseFreq) *
+                ((double)v.voice->sample->sampleRate / (double)m_sampleRate);
+        }
+    }
+    else if (v.voice->type == GBAVoice::SQUARE_1 || v.voice->type == GBAVoice::SQUARE_2)
+    {
+        int intSemi = (int)floorf(totalSemi);
+        int fineAdjust = (int)((totalSemi - (float)intSemi) * 256.0f);
+        if (fineAdjust < 0) { intSemi--; fineAdjust += 256; }
+        if (fineAdjust > 255) fineAdjust = 255;
+        int reg = cgbMidiKeyToReg(pitchKey + intSemi, fineAdjust);
+        v.squarePhaseInc = cgbSquareRegToHz(reg) / (double)m_sampleRate;
+    }
+    else if (v.voice->type == GBAVoice::PROG_WAVE)
+    {
+        int intSemi = (int)floorf(totalSemi);
+        int fineAdjust = (int)((totalSemi - (float)intSemi) * 256.0f);
+        if (fineAdjust < 0) { intSemi--; fineAdjust += 256; }
+        if (fineAdjust > 255) fineAdjust = 255;
+        int reg = cgbMidiKeyToReg(pitchKey + intSemi, fineAdjust);
+        double freq = cgbWaveRegToHz(reg);
+        int numSamples = (v.voice->sample && !v.voice->sample->pcmData.empty())
+                         ? (int)v.voice->sample->pcmData.size() : 32;
+        v.sampleStep = freq * (double)numSamples / (double)m_sampleRate;
+    }
+    else if (v.voice->type == GBAVoice::NOISE)
+    {
+        int intSemi = (int)floorf(totalSemi);
+        double noiseFreq = noiseKeyToHz(pitchKey + intSemi);
+        v.noiseInterval = (double)m_sampleRate / noiseFreq;
     }
 }
 
@@ -379,49 +512,7 @@ void GBASynthEngine::pitchBend(int value, int channel)
         if (m_voices[i].active && m_voices[i].channel == channel)
         {
             m_voices[i].pitchBend = semitones;
-
-            // GBA hardware ignores pitch bend on rhythm (drum) voices
-            if (m_voices[i].isRhythm) continue;
-
-            int pitchKey = m_voices[i].note;
-
-            if (m_voices[i].voice->type == GBAVoice::DIRECT_SOUND)
-            {
-                float targetFreq = midiNoteToFreq(pitchKey) * powf(2.0f, semitones / 12.0f);
-                float baseFreq = midiNoteToFreq(m_voices[i].voice->baseMidiKey);
-                if (m_voices[i].voice->sample && m_voices[i].voice->sample->sampleRate > 0)
-                {
-                    m_voices[i].sampleStep = (targetFreq / baseFreq) *
-                        ((double)m_voices[i].voice->sample->sampleRate / (double)m_sampleRate);
-                }
-            }
-            else if (m_voices[i].voice->type == GBAVoice::SQUARE_1 || m_voices[i].voice->type == GBAVoice::SQUARE_2)
-            {
-                // GBA-accurate: split semitones into integer key offset + fine adjust
-                int intSemi = (int)floorf(semitones);
-                int fineAdjust = (int)((semitones - (float)intSemi) * 256.0f);
-                if (fineAdjust > 255) fineAdjust = 255;
-                int reg = cgbMidiKeyToReg(pitchKey + intSemi, fineAdjust);
-                m_voices[i].squarePhaseInc = cgbSquareRegToHz(reg) / (double)m_sampleRate;
-            }
-            else if (m_voices[i].voice->type == GBAVoice::PROG_WAVE)
-            {
-                int intSemi = (int)floorf(semitones);
-                int fineAdjust = (int)((semitones - (float)intSemi) * 256.0f);
-                if (fineAdjust > 255) fineAdjust = 255;
-                int reg = cgbMidiKeyToReg(pitchKey + intSemi, fineAdjust);
-                double freq = cgbWaveRegToHz(reg);
-                int numSamples = (m_voices[i].voice->sample && !m_voices[i].voice->sample->pcmData.empty())
-                                 ? (int)m_voices[i].voice->sample->pcmData.size() : 32;
-                m_voices[i].sampleStep = freq * (double)numSamples / (double)m_sampleRate;
-            }
-            else if (m_voices[i].voice->type == GBAVoice::NOISE)
-            {
-                // Noise pitch bend: re-lookup noise table with modified key (discrete steps)
-                int intSemi = (int)floorf(semitones);
-                double noiseFreq = noiseKeyToHz(pitchKey + intSemi);
-                m_voices[i].noiseInterval = (double)m_sampleRate / noiseFreq;
-            }
+            updateVoicePitch(m_voices[i]);
         }
     }
 }
@@ -517,8 +608,20 @@ void GBASynthEngine::computeEnvelopeStep(ActiveVoice& v)
                 {
                     // Instant release
                     v.envelopeVolume = 0;
-                    v.phase = ActiveVoice::OFF;
-                    v.active = false;
+                    // CGB pseudo-echo: echoVol = (envelopeGoal * pseudoEchoVol + 0xFF) >> 8
+                    {
+                        int echoVol = (v.envelopeGoal * (int)v.pseudoEchoVol + 0xFF) >> 8;
+                        if (echoVol > 0)
+                        {
+                            v.envelopeVolume = echoVol;
+                            v.phase = ActiveVoice::ECHO;
+                        }
+                        else
+                        {
+                            v.phase = ActiveVoice::OFF;
+                            v.active = false;
+                        }
+                    }
                 }
                 else
                 {
@@ -529,14 +632,33 @@ void GBASynthEngine::computeEnvelopeStep(ActiveVoice& v)
                         if (v.envelopeVolume <= 0)
                         {
                             v.envelopeVolume = 0;
-                            v.phase = ActiveVoice::OFF;
-                            v.active = false;
+                            int echoVol = (v.envelopeGoal * (int)v.pseudoEchoVol + 0xFF) >> 8;
+                            if (echoVol > 0)
+                            {
+                                v.envelopeVolume = echoVol;
+                                v.phase = ActiveVoice::ECHO;
+                            }
+                            else
+                            {
+                                v.phase = ActiveVoice::OFF;
+                                v.active = false;
+                            }
                         }
                         else
                         {
                             v.envelopeCounter = v.voice->release;
                         }
                     }
+                }
+                break;
+
+            case ActiveVoice::ECHO:
+                if (v.pseudoEchoLen > 0)
+                    v.pseudoEchoLen--;
+                if (v.pseudoEchoLen <= 0)
+                {
+                    v.phase = ActiveVoice::OFF;
+                    v.active = false;
                 }
                 break;
 
@@ -582,9 +704,27 @@ void GBASynthEngine::computeEnvelopeStep(ActiveVoice& v)
 
             case ActiveVoice::RELEASE:
                 v.envelopeVolume = (v.envelopeVolume * v.voice->release) >> 8;
-                if (v.envelopeVolume <= 0)
+                if (v.envelopeVolume <= (int)v.pseudoEchoVol)
                 {
-                    v.envelopeVolume = 0;
+                    if (v.pseudoEchoVol == 0)
+                    {
+                        v.envelopeVolume = 0;
+                        v.phase = ActiveVoice::OFF;
+                        v.active = false;
+                    }
+                    else
+                    {
+                        v.envelopeVolume = (int)v.pseudoEchoVol;
+                        v.phase = ActiveVoice::ECHO;
+                    }
+                }
+                break;
+
+            case ActiveVoice::ECHO:
+                if (v.pseudoEchoLen > 0)
+                    v.pseudoEchoLen--;
+                if (v.pseudoEchoLen <= 0)
+                {
                     v.phase = ActiveVoice::OFF;
                     v.active = false;
                 }
@@ -683,26 +823,50 @@ void GBASynthEngine::renderFrames(float* output, int frameCount)
     wxMutexLocker lock(m_mutex);
     memset(output, 0, frameCount * 2 * sizeof(float));
 
-    for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
+    static const double FRAME_INTERVAL = 1.0 / 59.7275; // GBA VBlank period in seconds
+    double samplesPerFrame = (double)m_sampleRate * FRAME_INTERVAL;
+
+    // Cache previous modM values per channel to detect LFO changes
+    int8_t prevModM[16];
+    for (int ch = 0; ch < 16; ch++)
+        prevModM[ch] = m_channelMod[ch].modM;
+
+    for (int f = 0; f < frameCount; f++)
     {
-        ActiveVoice& v = m_voices[i];
-        if (!v.active) continue;
-
-        float velocityScale = (float)v.velocity / 127.0f;
-        float channelVol = m_channelVolume[v.channel];
-        float envMax = v.isCgbVoice ? 15.0f : 255.0f;
-
-        for (int f = 0; f < frameCount; f++)
+        // Check if we've crossed a ~60Hz frame boundary
+        m_globalFrameCounter += 1.0;
+        if (m_globalFrameCounter >= samplesPerFrame)
         {
-            // Step envelope at GBA frame rate (~60Hz)
-            v.frameSampleCounter += 1.0;
-            if (v.frameSampleCounter >= ((double)m_sampleRate / 59.7275))
+            m_globalFrameCounter -= samplesPerFrame;
+
+            // Update LFO for all 16 channels
+            for (int ch = 0; ch < 16; ch++)
             {
-                v.frameSampleCounter -= ((double)m_sampleRate / 59.7275);
-                computeEnvelopeStep(v);
+                prevModM[ch] = m_channelMod[ch].modM;
+                updateLFO(ch);
             }
 
-            if (!v.active) break;
+            // Envelope step + pitch update for all active voices
+            for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
+            {
+                ActiveVoice& v = m_voices[i];
+                if (!v.active) continue;
+                computeEnvelopeStep(v);
+                if (!v.active) continue;
+                // If vibrato (modT==0) and modM changed, recalculate pitch
+                if (m_channelMod[v.channel].modT == 0 &&
+                    m_channelMod[v.channel].modM != prevModM[v.channel])
+                {
+                    updateVoicePitch(v);
+                }
+            }
+        }
+
+        // Render all active voices for this sample
+        for (int i = 0; i < MAX_ACTIVE_VOICES; i++)
+        {
+            ActiveVoice& v = m_voices[i];
+            if (!v.active) continue;
 
             float sample = 0.0f;
             switch (v.voice->type)
@@ -724,10 +888,45 @@ void GBASynthEngine::renderFrames(float* output, int frameCount)
                     break;
             }
 
+            if (!v.active) continue;
+
+            float envMax = v.isCgbVoice ? 15.0f : 255.0f;
             float envGain = (float)v.envelopeVolume / envMax;
-            float gain = sample * envGain * velocityScale * channelVol;
-            output[f * 2 + 0] += gain * v.panL;
-            output[f * 2 + 1] += gain * v.panR;
+            float velocityScale = (float)v.velocity / 127.0f;
+            float channelVol = m_channelVolume[v.channel];
+
+            float gain = sample * envGain * velocityScale;
+
+            // Apply tremolo (modT==1): volume modulation
+            const ChannelModState& mod = m_channelMod[v.channel];
+            if (mod.modT == 1 && mod.modM != 0)
+            {
+                // m4a.c: x = (vol * volX) >> 5; x = (x * (modM + 128)) >> 7
+                // We apply as a multiplier to the combined gain
+                float tremoloMul = (float)((int)mod.modM + 128) / 128.0f;
+                gain *= tremoloMul;
+            }
+
+            gain *= channelVol;
+
+            // Apply auto-pan (modT==2): pan offset by modM
+            float panL = v.panL;
+            float panR = v.panR;
+            if (mod.modT == 2 && mod.modM != 0)
+            {
+                // m4a.c: y = 2*pan + panX + modM, clamped to -128..127
+                // We shift the existing pan position by modM/128
+                float panShift = (float)mod.modM / 128.0f;
+                float basePan = atan2f(panR, panL) / ((float)M_PI * 0.5f);
+                float newPan = basePan + panShift * 0.5f;
+                if (newPan < 0.0f) newPan = 0.0f;
+                if (newPan > 1.0f) newPan = 1.0f;
+                panL = cosf(newPan * (float)M_PI * 0.5f);
+                panR = sinf(newPan * (float)M_PI * 0.5f);
+            }
+
+            output[f * 2 + 0] += gain * panL;
+            output[f * 2 + 1] += gain * panR;
         }
     }
 
