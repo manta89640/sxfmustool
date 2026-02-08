@@ -138,6 +138,10 @@ namespace AriaMaestosa
         {
             return mainPane->getHeight();
         }
+        double getContentScaleFactor()
+        {
+            return mainPane->GetContentScaleFactor();
+        }
         bool isMouseDown()
         {
             return mainPane->isMouseDown();

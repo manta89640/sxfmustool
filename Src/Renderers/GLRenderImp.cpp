@@ -92,7 +92,7 @@ void line(const int x1, const int y1, const int x2, const int y2)
 
 void lineWidth(const int n)
 {
-    glLineWidth(n);
+    glLineWidth(n * Display::getContentScaleFactor());
 }
 
 void lineSmooth(const bool enabled)
@@ -110,7 +110,7 @@ void point(const int x, const int y)
 
 void pointSize(const int n)
 {
-    glPointSize(n);
+    glPointSize(n * Display::getContentScaleFactor());
 }
 
 void rect(const int x1, const int y1, const int x2, const int y2)
@@ -128,7 +128,7 @@ void bordered_rect_no_start(const int x1, const int y1, const int x2, const int 
     rect(x1,y1,x2,y2);
 
     glColor3f(0,0,0);
-    glLineWidth(1);
+    glLineWidth(Display::getContentScaleFactor());
     glBegin(GL_LINES);
 
     glVertex2f(round(x1*10.0), round((y2+0.5)*10.0));
@@ -152,7 +152,7 @@ void bordered_rect(const int x1, const int y1, const int x2, const int y2)
         drivers and their inconsistent rounding!*/
 
     glColor3f(0,0,0);
-    glLineWidth(1);
+    glLineWidth(Display::getContentScaleFactor());
     glBegin(GL_LINES);
 
     glVertex2f(round(x1*10.0), round(y2*10.0));
@@ -341,8 +341,9 @@ void renderString(const wxString& string, const int x, const int y, const int ma
 void beginScissors(const int x, const int y, const int width, const int height)
 {
     glEnable(GL_SCISSOR_TEST);
-    // glScissor doesn't seem to follow the coordinate system so I need to manually reverse the Y coord
-    glScissor(x, (Display::getHeight() - y - height), width, height);
+    // glScissor operates in framebuffer (physical pixel) coordinates, scale for Retina/HiDPI
+    const double s = Display::getContentScaleFactor();
+    glScissor((int)(x * s), (int)((Display::getHeight() - y - height) * s), (int)(width * s), (int)(height * s));
 }
 void endScissors()
 {

@@ -210,7 +210,7 @@ void CoreMidiOutput::note_on(const int note, const int volume, const int channel
     
     const int MESSAGESIZE = 3;
 
-    Byte noteon[MESSAGESIZE] = {0x90 | channel, note, volume};
+    Byte noteon[MESSAGESIZE] = {(Byte)(0x90 | channel), (Byte)note, (Byte)volume};
     currentpacket = MIDIPacketListAdd(packetlist, sizeof(buffer), 
                                       currentpacket, timestamp, MESSAGESIZE, noteon);
     
@@ -232,7 +232,7 @@ void CoreMidiOutput::note_off(const int note, const int channel)
     const int MESSAGESIZE = 3;
 
     currentpacket = MIDIPacketListInit(packetlist);
-    Byte noteoff[MESSAGESIZE] = {0x90 | channel, note, 0};
+    Byte noteoff[MESSAGESIZE] = {(Byte)(0x90 | channel), (Byte)note, 0};
     currentpacket = MIDIPacketListAdd(packetlist, sizeof(buffer), 
                                       currentpacket, timestamp, MESSAGESIZE, noteoff);
     
@@ -254,7 +254,7 @@ void CoreMidiOutput::prog_change(const int instrument, const int channel)
     const int MESSAGESIZE = 2;
     
     currentpacket = MIDIPacketListInit(packetlist);
-    Byte noteoff[MESSAGESIZE] = {0xC0 | channel, instrument};
+    Byte noteoff[MESSAGESIZE] = {(Byte)(0xC0 | channel), (Byte)instrument};
     currentpacket = MIDIPacketListAdd(packetlist, sizeof(buffer), 
                                       currentpacket, timestamp, MESSAGESIZE, noteoff);
     
@@ -275,7 +275,7 @@ void CoreMidiOutput::controlchange(const int controller, const int value, const 
     const int MESSAGESIZE = 3;
     
     currentpacket = MIDIPacketListInit(packetlist);
-    Byte noteoff[MESSAGESIZE] = {0xB0 | channel, controller, value};
+    Byte noteoff[MESSAGESIZE] = {(Byte)(0xB0 | channel), (Byte)controller, (Byte)value};
     currentpacket = MIDIPacketListAdd(packetlist, sizeof(buffer), 
                                       currentpacket, timestamp, MESSAGESIZE, noteoff);
     
@@ -299,7 +299,7 @@ void CoreMidiOutput::pitch_bend(const int value, const int channel)
     int c2 = ((value >> 7) & 0x7F);
     
     currentpacket = MIDIPacketListInit(packetlist);
-    Byte noteoff[MESSAGESIZE] = {0xE0 | channel, c1, c2};
+    Byte noteoff[MESSAGESIZE] = {(Byte)(0xE0 | channel), (Byte)c1, (Byte)c2};
     currentpacket = MIDIPacketListAdd(packetlist, sizeof(buffer), 
                                       currentpacket, timestamp, MESSAGESIZE, noteoff);
     

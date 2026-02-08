@@ -97,6 +97,7 @@ namespace AriaMaestosa
         void render();
         int getWidth();
         int getHeight();
+        double getContentScaleFactor();
         bool isMouseDown();
         bool isSelectLessPressed();
         bool isSelectMorePressed();

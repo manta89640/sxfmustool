@@ -387,7 +387,7 @@ OSStatus LoadSMF(const char* data, int dataSize, MusicSequence& sequence, MusicS
     }
     	
     CFDataRef cfdata = CFDataCreate(kCFAllocatorDefault, (const UInt8*)data, dataSize);
-	result = MusicSequenceFileLoadData (sequence, cfdata, 0, loadFlags);
+	result = MusicSequenceFileLoadData (sequence, cfdata, kMusicSequenceFile_AnyType, loadFlags);
     if (result != 0)
     {
         fprintf(stderr, "Error %i at MusicSequenceFileLoad\n", (int)result);

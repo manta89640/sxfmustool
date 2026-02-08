@@ -346,7 +346,7 @@ def compile_Aria(which_os):
         sources = sources + ['Src/Midi/Players/Mac/QuickTimeExport.mm','Src/GUI/Machelper.mm']
         env.Append(CPPPATH=['Src/Midi/Players/Mac'])
     
-        env.Append(LINKFLAGS = ['-framework','QTKit','-framework', 'Quicktime','-framework','CoreAudio',
+        env.Append(LINKFLAGS = ['-framework','CoreAudio',
         '-framework','AudioToolbox','-framework','AudioUnit','-framework','AppKit',
         '-framework','Carbon','-framework','Cocoa','-framework','IOKit','-framework','System',
         '-framework','CoreMIDI'])
@@ -355,8 +355,8 @@ def compile_Aria(which_os):
             env.Append(CCFLAGS=['-arch','i386'])
             env.Append(LINKFLAGS = ['-arch','i386'])
         elif compiler_arch == '64bit':
-            env.Append(CCFLAGS=['-arch','x86_64'])
-            env.Append(LINKFLAGS = ['-arch','x86_64'])
+            env.Append(CCFLAGS=['-arch','arm64'])
+            env.Append(LINKFLAGS = ['-arch','arm64'])
             
             
         if renderer == 'opengl':

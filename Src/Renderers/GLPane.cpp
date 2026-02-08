@@ -116,7 +116,8 @@ void GLPane::initOpenGLFor2D()
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 
-    glViewport(0, 0, GetSize().x, GetSize().y);
+    const double scaleFactor = GetContentScaleFactor();
+    glViewport(0, 0, (int)(GetSize().x * scaleFactor), (int)(GetSize().y * scaleFactor));
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
 
